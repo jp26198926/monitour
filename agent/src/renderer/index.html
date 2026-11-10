@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monitour Agent</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f1117;
+      color: #e1e4e8;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .titlebar {
+      height: 36px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      -webkit-app-region: drag;
+      user-select: none;
+    }
+    .titlebar span {
+      font-size: 12px;
+      font-weight: 600;
+      color: #8b949e;
+    }
+    .titlebar-btns {
+      margin-left: auto;
+      -webkit-app-region: no-drag;
+      display: flex;
+      gap: 6px;
+    }
+    .titlebar-btns button {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+    }
+    .btn-min { background: #d29922; }
+    .btn-close { background: #f85149; }
+
+    .content {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      overflow-y: auto;
+    }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 32px;
+      width: 100%;
+      max-width: 420px;
+    }
+
+    .card h1 {
+      font-size: 22px;
+      margin-bottom: 4px;
+      color: #58a6ff;
+    }
+
+    .card .subtitle {
+      color: #8b949e;
+      font-size: 13px;
+      margin-bottom: 24px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #8b949e;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .form-group input {
+      width: 100%;
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e1e4e8;
+      font-size: 14px;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color 150ms;
+      pointer-events: auto;
+      -webkit-app-region: no-drag;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .form-group input:focus {
+      border-color: #58a6ff;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 11px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 150ms;
+    }
+    .btn-primary {
+      background: #58a6ff;
+      color: #fff;
+    }
+    .btn-primary:hover { background: #79b8ff; }
+    .btn-primary:disabled {
+      background: #30363d;
+      color: #6e7681;
+      cursor: not-allowed;
+    }
+
+    .error-msg {
+      background: rgba(248, 81, 73, 0.12);
+      border: 1px solid #f85149;
+      border-radius: 6px;
+      padding: 10px 12px;
+      color: #f85149;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+    }
+
+    .success-msg {
+      background: rgba(63, 185, 80, 0.12);
+      border: 1px solid #3fb950;
+      border-radius: 6px;
+      padding: 10px 12px;
+      color: #3fb950;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+    }
+
+    /* Status view */
+    .status-view {
+      display: none;
+      text-align: center;
+    }
+    .status-dot {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+    }
+    .status-dot.online { background: #3fb950; }
+    .status-dot.connecting { background: #d29922; animation: pulse 1s infinite; }
+    .status-dot.offline { background: #6e7681; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .device-name {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 8px 0 4px;
+    }
+    .device-id {
+      color: #6e7681;
+      font-size: 12px;
+      font-family: monospace;
+    }
+
+    .status-info {
+      margin-top: 20px;
+      text-align: left;
+    }
+    .status-info .row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #21262d;
+      font-size: 13px;
+    }
+    .status-info .row .label { color: #8b949e; }
+    .status-info .row .value { color: #e1e4e8; }
+
+    .footer-links {
+      margin-top: 16px;
+      text-align: center;
+      font-size: 12px;
+    }
+    .footer-links a {
+      color: #58a6ff;
+      text-decoration: none;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid #30363d;
+      border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .update-banner {
+      background: rgba(88, 166, 255, 0.1);
+      border: 1px solid #58a6ff;
+      border-radius: 6px;
+      padding: 12px;
+      margin-top: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .service-section, .password-section {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #21262d;
+    }
+
+    /* Custom modals */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    .modal-box {
+      background: #1c2128;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 24px;
+      width: 380px;
+      max-width: 90vw;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+    .modal-box h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .modal-box p {
+      font-size: 13px;
+      color: #8b949e;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+    .modal-box input[type="password"],
+    .modal-box input[type="text"] {
+      width: 100%;
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e1e4e8;
+      font-size: 14px;
+      padding: 10px 12px;
+      outline: none;
+      margin-bottom: 16px;
+      pointer-events: auto;
+      -webkit-app-region: no-drag;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .modal-box input:focus {
+      border-color: #58a6ff;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .modal-actions .btn {
+      padding: 8px 20px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .modal-btn-cancel {
+      background: #21262d;
+      color: #8b949e;
+      border: 1px solid #30363d;
+    }
+    .modal-btn-cancel:hover {
+      background: #30363d;
+      color: #e1e4e8;
+    }
+    .modal-btn-ok {
+      background: #58a6ff;
+      color: #fff;
+    }
+    .modal-btn-ok:hover {
+      background: #79b8ff;
+    }
+    .modal-btn-danger {
+      background: #f85149;
+      color: #fff;
+    }
+    .modal-btn-danger:hover {
+      opacity: 0.9;
+    }
+  </style>
+</head>
+<body>
+  <div class="titlebar">
+    <span>Monitour Agent</span>
+    <div class="titlebar-btns">
+      <button class="btn-min" id="btnMin" title="Minimize"></button>
+      <button class="btn-close" id="btnClose" title="Close"></button>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- DELETED VIEW -->
+    <div class="card" id="deletedView" style="display:none">
+      <div style="text-align:center;padding:20px 0">
+        <div style="font-size:48px;margin-bottom:12px">&#9888;</div>
+        <h2 style="font-size:18px;font-weight:600;margin-bottom:8px;color:#f85149">Device Removed</h2>
+        <p style="color:#8b949e;font-size:14px;margin-bottom:24px">
+          This device was deleted from the server.<br/>You need to re-enroll to reconnect.
+        </p>
+      </div>
+      <form id="reEnrollForm">
+        <div class="form-group">
+          <label>Server URL</label>
+          <input type="text" id="reEnrollServerUrl" placeholder="http://your-server:4430" required />
+        </div>
+        <div class="form-group">
+          <label>Enrollment Token</label>
+          <input type="text" id="reEnrollToken" placeholder="Paste new enrollment token" required />
+        </div>
+        <button type="submit" class="btn btn-primary" id="reEnrollBtn" style="width:100%">
+          Re-Enroll
+        </button>
+      </form>
+    </div>
+
+    <!-- ENROLLMENT FORM -->
+    <div class="card" id="enrollView">
+      <h1>Monitour Agent</h1>
+      <p class="subtitle">Enter your server URL and enrollment token to connect this device.</p>
+
+      <div class="error-msg" id="errorBox"></div>
+      <div class="success-msg" id="successBox"></div>
+
+      <form id="enrollForm">
+        <div class="form-group">
+          <label>Server URL</label>
+          <input type="text" id="serverUrl" placeholder="http://192.168.1.100:4430" required />
+        </div>
+        <div class="form-group">
+          <label>Enrollment Token <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional in open mode)</span></label>
+          <input type="text" id="enrollToken" placeholder="Paste token or leave blank for open enrollment" />
+        </div>
+        <button type="submit" class="btn btn-primary" id="submitBtn">
+          Connect & Enroll
+        </button>
+      </form>
+    </div>
+
+    <!-- STATUS VIEW (after enrollment) -->
+    <div class="card status-view" id="statusView">
+      <div><span class="status-dot connecting" id="statusDot"></span><span id="statusLabel">Connecting…</span></div>
+      <div class="device-name" id="deviceName">—</div>
+      <div class="device-id" id="deviceId">—</div>
+
+      <div class="status-info">
+        <div class="row"><span class="label">Server</span><span class="value" id="infoServer">—</span></div>
+        <div class="row"><span class="label">Platform</span><span class="value" id="infoPlatform">—</span></div>
+        <div class="row"><span class="label">Agent Version</span><span class="value" id="infoVersion">0.2.0</span></div>
+        <div class="row"><span class="label">Last Seen</span><span class="value" id="infoLastSeen">—</span></div>
+      </div>
+
+      <!-- Update banner -->
+      <div class="update-banner" id="updateBanner" style="display:none">
+        <div><strong>Update available</strong> <span id="updateVersion"></span></div>
+        <button class="btn btn-primary btn-sm" id="updateNowBtn">Update Now</button>
+      </div>
+
+      <!-- Service status & controls -->
+      <div class="service-section">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <span style="font-size:13px;color:var(--text-secondary)">Service</span>
+          <span id="serviceStatusText" style="font-size:13px">Not installed</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="installServiceBtn" style="width:100%">Install as Service (Auto-run)</button>
+        <button class="btn btn-danger btn-sm" id="uninstallServiceBtn" style="width:100%;margin-top:6px;display:none">Uninstall Service</button>
+      </div>
+
+      <!-- Settings password -->
+      <div class="password-section">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <span style="font-size:13px;color:var(--text-secondary)">Settings Password</span>
+          <span id="passwordStatusText" style="font-size:13px">Not set</span>
+        </div>
+        <div id="passwordForm">
+          <div class="form-group" style="margin-bottom:8px">
+            <input type="password" id="passwordInput" placeholder="New password (min 6 chars)" autocomplete="new-password" tabindex="0" />
+          </div>
+          <button class="btn btn-secondary btn-sm" id="setPasswordBtn" style="width:100%">Set Password</button>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="removePasswordBtn" style="width:100%;margin-top:6px;display:none">Remove Password</button>
+      </div>
+
+      <div class="footer-links">
+        <a href="#" id="forgetLink">Reset & re-enroll</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom modal container -->
+  <div id="modalContainer"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

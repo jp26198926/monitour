@@ -1,0 +1,41 @@
+{
+  "name": "monitour",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Monitour — MeshCentral-inspired remote monitoring & management platform",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "shared",
+    "server",
+    "dashboard",
+    "agent"
+  ],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:server dev:dashboard",
+    "dev:server": "npm run dev --workspace server",
+    "dev:dashboard": "npm run dev --workspace dashboard",
+    "dev:agent": "npm run dev --workspace agent",
+    "build": "npm-run-all build:shared build:server build:dashboard",
+    "build:shared": "npm run build --workspace shared",
+    "build:server": "npm run build --workspace server",
+    "build:dashboard": "npm run build --workspace dashboard",
+    "build:agent": "npm run build --workspace agent && npm run dist --workspace agent",
+    "start:server": "npm run start --workspace server",
+    "lint": "eslint .",
+    "typecheck": "tsc -b shared server dashboard agent"
+  },
+  "devDependencies": {
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "allowScripts": {
+    "electron@35.7.5": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true,
+    "node-pty@1.1.0": true,
+    "wrtc@0.4.7": true
+  }
+}
