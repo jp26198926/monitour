@@ -2,6 +2,16 @@ appId: com.monitour.agent
 productName: Monitour Agent
 copyright: Copyright © 2025 Monitour
 
+# Native modules (node-pty, libnut) ship prebuilt binaries — skip recompilation
+npmRebuild: false
+
+# Unpack .node binaries from asar so they can be loaded at runtime
+asarUnpack:
+  - "**/*.node"
+  - "**/*.dll"
+  - "**/*.exe"
+  - "**/*.pdb"
+
 directories:
   output: dist
   buildResources: build

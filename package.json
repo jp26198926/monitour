@@ -32,10 +32,9 @@
     "node": ">=20"
   },
   "allowScripts": {
-    "electron@35.7.5": true,
+    "electron@45.2.3": true,
     "esbuild@0.28.2": true,
     "esbuild@0.25.12": true,
-    "node-pty@1.1.0": true,
-    "wrtc@0.4.7": true
+    "node-pty@1.1.0": true
   }
 }
