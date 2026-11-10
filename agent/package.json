@@ -1,6 +1,8 @@
 {
   "name": "@monitour/agent",
   "version": "0.2.0",
+  "description": "Monitour remote management agent",
+  "author": "Monitour",
   "private": true,
   "type": "module",
   "main": "./dist/main/electron.js",
@@ -15,6 +17,7 @@
   "dependencies": {
     "@monitour/shared": "*",
     "@nut-tree-fork/nut-js": "^4.2.6",
+    "app-builder-bin": "^5.0.0-alpha.10",
     "axios": "^1.8.0",
     "bcryptjs": "^3.0.2",
     "node-forge": "^1.3.1",
@@ -26,7 +29,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/node-forge": "^1.3.11",
-    "electron": "^35.0.0",
+    "electron": "35.7.5",
     "electron-builder": "^25.1.8",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0"

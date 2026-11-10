@@ -8,6 +8,7 @@ directories:
 
 files:
   - dist/**
+  - src/renderer/**
   - node_modules/**
   - package.json
 
