@@ -46,6 +46,7 @@ export function setupAgentNamespace(ns: Namespace, cfg: Config, certs: ServerCer
           systemInfo: payload.systemInfo,
           lastSeen: new Date(),
           status: 'online',
+          agentVersion: payload.agentVersion,
         });
         // Relay to dashboards watching this device
         ns.server.of('/dashboard').emit('device:status-update', {
@@ -107,6 +108,15 @@ export function setupAgentNamespace(ns: Namespace, cfg: Config, certs: ServerCer
       ns.server.of('/dashboard').emit('device:session-state-update', {
         deviceId,
         sessionState: payload.sessionState,
+        ts: payload.ts,
+      });
+    });
+
+    // ---- Update progress from agent ----
+    socket.on(AgentEvent.UpdateResult, (payload: { deviceId: string; progress: { stage: string; message: string; version?: string }; ts: number }) => {
+      ns.server.of('/dashboard').emit('dash:update-progress', {
+        deviceId,
+        progress: payload.progress,
         ts: payload.ts,
       });
     });

@@ -11,6 +11,7 @@ import { refreshSessionState, getSessionState, onSessionStateChange, type Sessio
 import { getActiveBackend } from './captureBackend.js';
 import { ensureLockCaptureTask, startLockCapture, stopLockCapture } from './service.js';
 import { sendSas, isSasAvailable } from './sas.js';
+import { checkForUpdates, downloadUpdate, applyUpdate } from './updater.js';
 import { openTerminal, writeTerminal, resizeTerminal, closeTerminal, closeAllTerminals } from './terminal.js';
 import {
   listDirectory,
@@ -195,6 +196,16 @@ export class AgentConnection {
     }
   }
 
+  private emitUpdateProgress(progress: { stage: string; message: string; version?: string }): void {
+    if (this.socket?.connected) {
+      this.socket.emit(AgentEvent.UpdateResult, {
+        deviceId: this.credentials.deviceId,
+        progress,
+        ts: Date.now(),
+      });
+    }
+  }
+
   private emitSessionStateIfChanged(): void {
     if (!this.socket?.connected) return;
     const state = getSessionState();
@@ -324,6 +335,30 @@ export class AgentConnection {
             result.success = false;
             result.data = { requiresPhysical: true, reason: sasResult.reason };
             result.error = 'Software SAS blocked — ask the local user to press Ctrl+Alt+Del';
+          }
+          break;
+        }
+
+        case 'agent:update': {
+          const serverUrl = this.credentials.serverUrl;
+          try {
+            this.emitUpdateProgress({ stage: 'checking', message: 'Checking for updates...' });
+            const manifest = await checkForUpdates(serverUrl);
+            if (!manifest) {
+              result.data = { updated: false, reason: 'no-update' };
+              this.emitUpdateProgress({ stage: 'done', message: 'No update available' });
+              break;
+            }
+            this.emitUpdateProgress({ stage: 'downloading', message: `Downloading ${manifest.version}...`, version: manifest.version });
+            const filepath = await downloadUpdate(serverUrl, manifest);
+            this.emitUpdateProgress({ stage: 'installing', message: `Installing ${manifest.version}...`, version: manifest.version });
+            applyUpdate(filepath);
+            result.data = { updated: true, version: manifest.version };
+            this.emitUpdateProgress({ stage: 'done', message: `Update to ${manifest.version} installing...`, version: manifest.version });
+          } catch (err) {
+            result.success = false;
+            result.error = err instanceof Error ? err.message : String(err);
+            this.emitUpdateProgress({ stage: 'error', message: result.error });
           }
           break;
         }

@@ -1,6 +1,7 @@
 import { Router } from 'express';
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import multer from 'multer';
 import { requireAuth, requireRole } from '../auth/middleware.js';
 import type { Config } from '../config.js';
 import type { UpdateManifest } from '@monitour/shared';
@@ -11,6 +12,14 @@ const log = createLogger('update');
 function getUpdatesDir(): string {
   return join(process.cwd(), 'updates');
 }
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, getUpdatesDir()),
+    filename: (_req, file, cb) => cb(null, basename(file.originalname)),
+  }),
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB max
+});
 
 function readManifest(): UpdateManifest | null {
   const manifestPath = join(getUpdatesDir(), 'manifest.json');
@@ -57,7 +66,7 @@ export function agentUpdateRoutes(cfg: Config): Router {
 
   // GET /api/agent/download/:filename — download update package
   router.get('/download/:filename', (req, res) => {
-    const filename = basename(req.params.filename); // prevent path traversal
+    const filename = basename(String(req.params.filename)); // prevent path traversal
     const filepath = join(getUpdatesDir(), filename);
     if (!existsSync(filepath)) {
       res.status(404).json({ error: 'Update file not found' });
@@ -79,6 +88,48 @@ export function agentUpdateRoutes(cfg: Config): Router {
           })
       : [];
     res.json({ manifest: readManifest(), files });
+  });
+
+  // POST /api/agent/updates — upload a new agent update package (admin)
+  router.post('/updates', requireAuth(cfg), requireRole('admin'), upload.single('file'), (req, res) => {
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: 'No file uploaded' });
+      return;
+    }
+    const { version, platform, arch, notes } = req.body as Record<string, string>;
+    if (!version) {
+      unlinkSync(file.path);
+      res.status(400).json({ error: 'version is required' });
+      return;
+    }
+
+    // Write manifest
+    const manifest: UpdateManifest = {
+      version,
+      platform: (platform || process.platform) as NodeJS.Platform,
+      arch: arch || process.arch,
+      filename: file.filename,
+      downloadUrl: `/api/agent/download/${file.filename}`,
+      notes: notes || '',
+      publishedAt: new Date().toISOString(),
+    };
+    writeFileSync(join(getUpdatesDir(), 'manifest.json'), JSON.stringify(manifest, null, 2));
+    log.info(`Update uploaded: ${file.filename} (version ${version})`);
+    res.json({ ok: true, manifest });
+  });
+
+  // DELETE /api/agent/updates/:filename — remove an update file (admin)
+  router.delete('/updates/:filename', requireAuth(cfg), requireRole('admin'), (req, res) => {
+    const filename = basename(String(req.params.filename));
+    const filepath = join(getUpdatesDir(), filename);
+    if (!existsSync(filepath)) {
+      res.status(404).json({ error: 'File not found' });
+      return;
+    }
+    unlinkSync(filepath);
+    log.info(`Update deleted: ${filename}`);
+    res.json({ ok: true });
   });
 
   return router;

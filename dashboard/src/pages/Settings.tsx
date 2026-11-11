@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { api } from '../api/client';
 import { useAuthStore } from '../store';
 import { useModal } from '../components/Modal';
@@ -222,6 +222,148 @@ export function SettingsPage() {
           </table>
         )}
       </div>
+
+      {/* Agent Updates */}
+      <AgentUpdatesSection />
+    </div>
+  );
+}
+
+function AgentUpdatesSection() {
+  const modal = useModal();
+  const [files, setFiles] = useState<{ name: string; size: number; modifiedAt: string }[]>([]);
+  const [manifest, setManifest] = useState<{ version: string; filename: string; notes: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadVersion, setUploadVersion] = useState('');
+  const [uploadNotes, setUploadNotes] = useState('');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadError, setUploadError] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const data = await api.get<{ manifest: { version: string; filename: string; notes: string } | null; files: { name: string; size: number; modifiedAt: string }[] }>('/agent/updates');
+      setManifest(data.manifest);
+      setFiles(data.files);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function handleUpload() {
+    if (!uploadFile || !uploadVersion) {
+      setUploadError('File and version are required');
+      return;
+    }
+    setUploading(true);
+    setUploadError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', uploadFile);
+      formData.append('version', uploadVersion);
+      formData.append('notes', uploadNotes);
+      await api.post('/agent/updates', formData);
+      await load();
+      setUploadFile(null);
+      setUploadVersion('');
+      setUploadNotes('');
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleDeleteFile(name: string) {
+    const ok = await modal.confirm({
+      title: 'Delete Update File',
+      message: `Delete "${name}"?`,
+      okText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/agent/updates/${name}`);
+      await load();
+    } catch (err) {
+      await modal.alert({ title: 'Error', message: 'Failed to delete: ' + (err instanceof Error ? err.message : 'Unknown error') });
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="card-header">
+        <h3 className="card-title">Agent Updates</h3>
+        {manifest && manifest.filename && (
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            Current: v{manifest.version} ({manifest.filename})
+          </span>
+        )}
+      </div>
+
+      {/* Upload form */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 16 }}>
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>File</label>
+          <input
+            type="file"
+            accept=".exe,.AppImage,.dmg,.msi,.zip"
+            onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+            style={{ fontSize: 13 }}
+          />
+        </div>
+        <div className="form-group" style={{ marginBottom: 0, width: 120 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Version</label>
+          <input
+            type="text"
+            placeholder="0.2.0"
+            value={uploadVersion}
+            onChange={(e) => setUploadVersion(e.target.value)}
+            style={{ fontSize: 13, width: '100%' }}
+          />
+        </div>
+        <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 200 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Notes</label>
+          <input
+            type="text"
+            placeholder="Release notes (optional)"
+            value={uploadNotes}
+            onChange={(e) => setUploadNotes(e.target.value)}
+            style={{ fontSize: 13, width: '100%' }}
+          />
+        </div>
+        <button className="btn btn-primary btn-sm" onClick={handleUpload} disabled={uploading || !uploadFile || !uploadVersion}>
+          {uploading ? 'Uploading...' : 'Upload'}
+        </button>
+      </div>
+      {uploadError && <div className="error-msg" style={{ marginBottom: 8 }}>{uploadError}</div>}
+
+      {/* File list */}
+      {files.length === 0 ? (
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>No update files uploaded yet.</div>
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>Size</th>
+              <th>Uploaded</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {files.map((f) => (
+              <tr key={f.name}>
+                <td>{f.name}</td>
+                <td>{(f.size / 1024 / 1024).toFixed(1)} MB</td>
+                <td>{new Date(f.modifiedAt).toLocaleString()}</td>
+                <td>
+                  <button className="btn btn-danger btn-sm" onClick={() => handleDeleteFile(f.name)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

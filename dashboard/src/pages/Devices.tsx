@@ -38,6 +38,9 @@ export function DevicesPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState('');
 
+  // Update state: deviceId -> progress message
+  const [updating, setUpdating] = useState<Record<string, string>>({});
+
   const handleThumbnailUpdate = useCallback(
     (payload: { deviceId: string; data: string; width: number; height: number; ts: number }) => {
       setThumbnails((prev) => ({ ...prev, [payload.deviceId]: { data: payload.data, ts: payload.ts } }));
@@ -78,6 +81,18 @@ export function DevicesPage() {
         });
         s.on('dash:thumbnails', (payload: Record<string, ThumbnailEntry>) => {
           if (!cancelled) setThumbnails(payload);
+        });
+        s.on('dash:update-progress', (payload: { deviceId: string; progress: { stage: string; message: string; version?: string } }) => {
+          if (cancelled) return;
+          setUpdating((prev) => {
+            const next = { ...prev };
+            if (payload.progress.stage === 'done' || payload.progress.stage === 'error') {
+              delete next[payload.deviceId];
+            } else {
+              next[payload.deviceId] = payload.progress.message;
+            }
+            return next;
+          });
         });
         s.emit('dash:request-devices');
         s.emit('dash:request-thumbnails');
@@ -170,6 +185,45 @@ export function DevicesPage() {
     }
   }
 
+  function sendUpdateCommand(deviceId: string) {
+    if (!socket) return;
+    const command = {
+      commandId: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: 'agent:update' as const,
+      sessionId: `update-${Date.now()}`,
+      params: {},
+    };
+    socket.emit('dash:send-command', { deviceId, command });
+    setUpdating((prev) => ({ ...prev, [deviceId]: 'Checking for updates...' }));
+  }
+
+  async function handleUpdateDevice(d: DeviceInfo) {
+    const ok = await modal.confirm({
+      title: 'Update Agent',
+      message: `Update the agent on "${displayName(d)}"? The agent will restart after the update.`,
+      okText: 'Update',
+    });
+    if (!ok) return;
+    sendUpdateCommand(d.id);
+  }
+
+  async function handleUpdateAll() {
+    const online = devices.filter((d) => d.status === 'online');
+    if (online.length === 0) {
+      await modal.alert({ title: 'No Devices', message: 'No online devices to update.' });
+      return;
+    }
+    const ok = await modal.confirm({
+      title: 'Update All Agents',
+      message: `Update agents on all ${online.length} online device(s)? Agents will restart after the update.`,
+      okText: 'Update All',
+    });
+    if (!ok) return;
+    for (const d of online) {
+      sendUpdateCommand(d.id);
+    }
+  }
+
   const displayName = (d: DeviceInfo) => d.alias || d.name;
 
   return (
@@ -187,6 +241,7 @@ export function DevicesPage() {
               </button>
             </div>
             <button className="btn btn-secondary btn-sm" onClick={() => socket?.emit('dash:request-devices')}>Refresh</button>
+            <button className="btn btn-secondary btn-sm" onClick={handleUpdateAll}>Update All</button>
           </div>
         </div>
 
@@ -270,6 +325,15 @@ export function DevicesPage() {
                       >
                         Connect
                       </button>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        disabled={d.status !== 'online' || !!updating[d.id]}
+                        style={d.status !== 'online' ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+                        onClick={() => handleUpdateDevice(d)}
+                        title={updating[d.id] || 'Update agent'}
+                      >
+                        {updating[d.id] ? '...' : 'Update'}
+                      </button>
                       <button className="btn btn-secondary btn-sm" onClick={() => openEdit(d)}>
                         Edit
                       </button>
@@ -319,6 +383,15 @@ export function DevicesPage() {
                       onClick={() => navigate(`/devices/${d.id}/desktop`)}
                     >
                       Connect
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      disabled={d.status !== 'online' || !!updating[d.id]}
+                      style={d.status !== 'online' ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+                      onClick={() => handleUpdateDevice(d)}
+                      title={updating[d.id] || 'Update agent'}
+                    >
+                      {updating[d.id] ? '...' : 'Update'}
                     </button>
                     <button className="btn btn-secondary btn-sm" onClick={() => openEdit(d)}>Edit</button>
                     <button className="btn btn-danger btn-sm" onClick={() => handleDelete(d.id)}>Delete</button>

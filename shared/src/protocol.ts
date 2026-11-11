@@ -90,6 +90,12 @@ export interface UpdateCheckResult {
   manifest: UpdateManifest | null;
 }
 
+export interface UpdateProgress {
+  stage: 'checking' | 'downloading' | 'installing' | 'done' | 'error';
+  message: string;
+  version?: string;
+}
+
 // -----------------------------------------------------------------------------
 // REST API contracts
 // -----------------------------------------------------------------------------
@@ -213,6 +219,7 @@ export type CommandType =
   | 'desktop:start'
   | 'desktop:stop'
   | 'desktop:sas'
+  | 'agent:update'
   | 'terminal:open'
   | 'terminal:input'
   | 'terminal:resize'
