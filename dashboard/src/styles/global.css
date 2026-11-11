@@ -542,6 +542,32 @@ input:focus, select:focus {
   padding: 6px 12px;
   font-size: 12px;
   color: #fff;
+  pointer-events: none;
+}
+
+.desktop-cursor {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  z-index: 10;
+  display: none;
+  transform: translate(-50%, -50%);
+}
+
+.overlay-badge-lock {
+  background: #d97706;
+  color: #fff;
+  font-weight: 600;
+}
+
+.overlay-badge-secure {
+  background: #dc2626;
+  color: #fff;
+  font-weight: 600;
 }
 
 /* View / Control toggle buttons */

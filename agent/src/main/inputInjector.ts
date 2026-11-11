@@ -1,17 +1,39 @@
-import { mouse, keyboard, Button, Key, Point, straightTo } from '@nut-tree-fork/nut-js';
+import { mouse, keyboard, Button, Key, Point } from '@nut-tree-fork/nut-js';
 import type { InputEvent } from '@monitour/shared';
+import { sendInputEvent as sendWinInput, attachToInputDesktop, detachFromDesktop } from './winInput.js';
+
+let sessionLocked = false;
+
+/** Set session lock state — routes input to WinInput when locked. */
+export function setSessionState(locked: boolean): void {
+  if (locked && !sessionLocked) {
+    sessionLocked = true;
+    // Try to attach to the Winlogon desktop for input injection
+    attachToInputDesktop();
+  } else if (!locked && sessionLocked) {
+    sessionLocked = false;
+    detachFromDesktop();
+  }
+}
 
 // nut.js is async; we queue events to avoid race conditions.
+// mousemove events are coalesced — only the latest position is kept,
+// since intermediate positions are irrelevant for remote desktop.
 const inputQueue: Array<() => Promise<void>> = [];
+let pendingMouseMove: (() => Promise<void>) | null = null;
 let processing = false;
 
 async function drainQueue(): Promise<void> {
   if (processing) return;
   processing = true;
-  while (inputQueue.length > 0) {
-    const fn = inputQueue.shift();
+  for (;;) {
+    // Prioritize the latest mousemove over queued events
+    const moveFn = pendingMouseMove;
+    pendingMouseMove = null;
+    const fn = moveFn ?? inputQueue.shift();
+    if (!fn) break;
     try {
-      await fn?.();
+      await fn();
     } catch (err) {
       console.error('Input injection error:', err);
     }
@@ -21,6 +43,11 @@ async function drainQueue(): Promise<void> {
 
 function enqueue(fn: () => Promise<void>): void {
   inputQueue.push(fn);
+  void drainQueue();
+}
+
+function enqueueMouseMove(fn: () => Promise<void>): void {
+  pendingMouseMove = fn;
   void drainQueue();
 }
 
@@ -144,13 +171,25 @@ const buttonMap: Record<number, Button> = {
 
 /**
  * Handle a single input event and inject it into the OS.
+ * Routes to WinInput (koffi SendInput) when the screen is locked,
+ * or nut.js when unlocked.
  */
 export function handleInputEvent(event: InputEvent): void {
+  // When locked, use WinInput (koffi SendInput on Winlogon desktop)
+  if (sessionLocked) {
+    try {
+      sendWinInput(event);
+    } catch (err) {
+      console.error('WinInput injection error:', err);
+    }
+    return;
+  }
+
   switch (event.type) {
     case 'mousemove': {
-      enqueue(async () => {
+      enqueueMouseMove(async () => {
         const pt = toScreenPoint(event.x, event.y);
-        await mouse.move(straightTo(pt));
+        await mouse.setPosition(pt);
       });
       break;
     }
@@ -158,7 +197,7 @@ export function handleInputEvent(event: InputEvent): void {
     case 'mousedown': {
       enqueue(async () => {
         const pt = toScreenPoint(event.x, event.y);
-        await mouse.move(straightTo(pt));
+        await mouse.setPosition(pt);
         await mouse.pressButton(buttonMap[event.button] ?? Button.LEFT);
       });
       break;
@@ -167,7 +206,7 @@ export function handleInputEvent(event: InputEvent): void {
     case 'mouseup': {
       enqueue(async () => {
         const pt = toScreenPoint(event.x, event.y);
-        await mouse.move(straightTo(pt));
+        await mouse.setPosition(pt);
         await mouse.releaseButton(buttonMap[event.button] ?? Button.LEFT);
       });
       break;

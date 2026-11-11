@@ -40,6 +40,8 @@ export interface DeviceInfo {
   group: string | null;
   /** User-defined alias name (overrides display name). */
   alias: string;
+  /** Whether the device's screen session is currently locked. */
+  sessionLocked?: boolean;
 }
 
 export interface SystemInfo {
@@ -168,6 +170,8 @@ export enum AgentEvent {
   Log = 'agent:log',
   /** Agent checked for updates — result sent to server */
   UpdateResult = 'agent:update-result',
+  /** Session lock/desktop state change */
+  SessionState = 'agent:session-state',
 }
 
 // Server -> Agent events
@@ -186,17 +190,29 @@ export enum ServerEvent {
   DeviceDeleted = 'server:device-deleted',
 }
 
+export interface SessionStateInfo {
+  locked: boolean;
+  secureDesktop: boolean;
+  inputDesktop: string | null;
+  inputReachability: 'ok' | 'uncertain' | 'unavailable';
+  sasAvailable: boolean;
+  captureBackend: 'dxgi' | 'gdi';
+  confidence: 'ffi' | 'heuristic';
+}
+
 export interface AgentStatusPayload {
   deviceId: string;
   status: DeviceStatus;
   systemInfo: SystemInfo;
   timestamp: number;
   agentVersion: string;
+  sessionState?: SessionStateInfo;
 }
 
 export type CommandType =
   | 'desktop:start'
   | 'desktop:stop'
+  | 'desktop:sas'
   | 'terminal:open'
   | 'terminal:input'
   | 'terminal:resize'

@@ -1,11 +1,16 @@
 import { io, type Socket } from 'socket.io-client';
+import fs from 'node:fs';
 import {
   loadAgentState,
   getAgentVersion,
   type DeviceCredentials,
 } from './enrollment.js';
 import { startCapture, captureFrame, getScreenInfo, getRawScreenDimensions, type ScreenFrame } from './screenCapture.js';
-import { handleInputEvent, setScreenDimensions } from './inputInjector.js';
+import { handleInputEvent, setScreenDimensions, setSessionState as setInjectorSessionState } from './inputInjector.js';
+import { refreshSessionState, getSessionState, onSessionStateChange, type SessionState } from './lockState.js';
+import { getActiveBackend } from './captureBackend.js';
+import { ensureLockCaptureTask, startLockCapture, stopLockCapture } from './service.js';
+import { sendSas, isSasAvailable } from './sas.js';
 import { openTerminal, writeTerminal, resizeTerminal, closeTerminal, closeAllTerminals } from './terminal.js';
 import {
   listDirectory,
@@ -22,6 +27,7 @@ import {
   type CommandResultPayload,
   type AgentStatusPayload,
   type SignalPayload,
+  type SessionStateInfo,
 } from '@monitour/shared';
 
 const AGENT_VERSION = getAgentVersion();
@@ -56,8 +62,10 @@ export class AgentConnection {
 
     this.socket.on('connect', () => {
       console.log(`Connected to server (socket=${this.socket?.id})`);
+      void getRawScreenDimensions().then((dims) => setScreenDimensions(dims.width, dims.height));
       this.sendStatus();
       this.startThumbnailCapture();
+      this.startSessionStatePolling();
     });
 
     this.socket.on('disconnect', (reason) => {
@@ -105,6 +113,8 @@ export class AgentConnection {
   disconnect(): void {
     if (this.statusTimer) clearInterval(this.statusTimer);
     this.stopThumbnailCapture();
+    this.stopSessionStatePolling();
+    this.stopLockCaptureMode();
     this.stopDesktopCapture();
     closeAllTerminals();
     this.socket?.disconnect();
@@ -148,6 +158,124 @@ export class AgentConnection {
     }
   }
 
+  // ---- Session lock/desktop state polling ----
+  private sessionStateTimer: ReturnType<typeof setInterval> | null = null;
+  private lastEmittedSessionState: SessionState | null = null;
+  private lockCaptureActive = false;
+  private lockCaptureTimer: ReturnType<typeof setInterval> | null = null;
+  private lockCaptureReady = false;
+
+  private buildSessionStateInfo(state: SessionState): SessionStateInfo {
+    return {
+      locked: state.locked,
+      secureDesktop: state.secureDesktop,
+      inputDesktop: state.inputDesktop,
+      inputReachability: state.confidence === 'ffi' ? 'ok' : 'uncertain',
+      sasAvailable: isSasAvailable(),
+      captureBackend: getActiveBackend().name,
+      confidence: state.confidence,
+    };
+  }
+
+  private startSessionStatePolling(): void {
+    this.stopSessionStatePolling();
+    // Immediate probe + poll every 3s
+    refreshSessionState();
+    this.emitSessionStateIfChanged();
+    this.sessionStateTimer = setInterval(() => {
+      refreshSessionState();
+      this.emitSessionStateIfChanged();
+    }, 3000);
+  }
+
+  private stopSessionStatePolling(): void {
+    if (this.sessionStateTimer) {
+      clearInterval(this.sessionStateTimer);
+      this.sessionStateTimer = null;
+    }
+  }
+
+  private emitSessionStateIfChanged(): void {
+    if (!this.socket?.connected) return;
+    const state = getSessionState();
+    const changed =
+      !this.lastEmittedSessionState ||
+      state.locked !== this.lastEmittedSessionState.locked ||
+      state.secureDesktop !== this.lastEmittedSessionState.secureDesktop;
+    if (changed) {
+      this.lastEmittedSessionState = { ...state };
+      // Notify input injector of lock state
+      setInjectorSessionState(state.locked);
+      this.socket.emit(AgentEvent.SessionState, {
+        deviceId: this.credentials.deviceId,
+        sessionState: this.buildSessionStateInfo(state),
+        ts: Date.now(),
+      });
+      // Start/stop lock screen capture based on lock state
+      if (state.locked && !this.lockCaptureActive) {
+        this.startLockCapture();
+      } else if (!state.locked && this.lockCaptureActive) {
+        this.stopLockCaptureMode();
+      }
+    }
+  }
+
+  // ---- Lock screen capture (reads frames from helper output) ----
+  private startLockCapture(): void {
+    console.log('Lock detected — starting lock screen capture');
+    // Ensure the scheduled task exists (first time may need elevation)
+    const ensure = ensureLockCaptureTask();
+    if (!ensure.success) {
+      console.warn('Failed to ensure lock capture task:', ensure.message);
+    }
+    const result = startLockCapture();
+    if (!result.success) {
+      console.warn('Failed to start lock capture:', result.message);
+      return;
+    }
+    this.lockCaptureActive = true;
+    this.lockCaptureReady = false;
+    // Poll the helper's output directory for frames
+    const outputDir = `${process.env.TEMP || '.'}/monitour-lock`;
+    const readyPath = `${outputDir}/ready`;
+    const framePath = `${outputDir}/frame.jpg`;
+    this.lockCaptureTimer = setInterval(() => {
+      try {
+        if (!this.lockCaptureReady) {
+          if (fs.existsSync(readyPath)) {
+            this.lockCaptureReady = true;
+            console.log('Lock capture helper ready');
+          }
+          return;
+        }
+        if (fs.existsSync(framePath)) {
+          const data = fs.readFileSync(framePath);
+          if (data.length > 0 && this.socket?.connected) {
+            this.socket.emit('agent:frame', {
+              header: {
+                v: 1,
+                kind: 'desktop',
+                payload: { type: 'frame', seq: Date.now(), width: 0, height: 0, quality: 0, ts: Date.now(), sessionId: 'lock-capture' },
+              },
+              data,
+            });
+          }
+        }
+      } catch { /* ignore read errors */ }
+    }, 100); // ~10fps polling
+  }
+
+  private stopLockCaptureMode(): void {
+    console.log('Unlock detected — stopping lock screen capture');
+    if (this.lockCaptureTimer) {
+      clearInterval(this.lockCaptureTimer);
+      this.lockCaptureTimer = null;
+    }
+    this.lockCaptureActive = false;
+    this.lockCaptureReady = false;
+    stopLockCapture();
+  }
+
   private sendStatus(): void {
     if (!this.socket?.connected) return;
     const payload: AgentStatusPayload = {
@@ -156,6 +284,7 @@ export class AgentConnection {
       systemInfo: getScreenInfo(),
       timestamp: Date.now(),
       agentVersion: AGENT_VERSION,
+      sessionState: this.buildSessionStateInfo(getSessionState()),
     };
     this.socket.emit(AgentEvent.Status, payload);
   }
@@ -175,6 +304,7 @@ export class AgentConnection {
           const quality = (cmd.params.quality as number) ?? 60;
           const fps = (cmd.params.fps as number) ?? 15;
           const maxWidth = cmd.params.width as number | undefined;
+          void getRawScreenDimensions().then((dims) => setScreenDimensions(dims.width, dims.height));
           this.startDesktopCapture(cmd.sessionId, quality, fps, maxWidth);
           result.data = { streaming: true };
           break;
@@ -183,6 +313,18 @@ export class AgentConnection {
         case 'desktop:stop': {
           this.stopDesktopCapture();
           result.data = { streaming: false };
+          break;
+        }
+
+        case 'desktop:sas': {
+          const sasResult = await sendSas();
+          if (sasResult.ok) {
+            result.data = { sent: true, method: sasResult.method };
+          } else {
+            result.success = false;
+            result.data = { requiresPhysical: true, reason: sasResult.reason };
+            result.error = 'Software SAS blocked — ask the local user to press Ctrl+Alt+Del';
+          }
           break;
         }
 

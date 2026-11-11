@@ -19,6 +19,9 @@ const log = createLogger('agent');
 /** Latest thumbnail per device (base64 JPEG). */
 export const thumbnailStore = new Map<string, { data: string; ts: number }>();
 
+/** Latest session lock state per device. */
+export const sessionStateStore = new Map<string, { locked: boolean; ts: number }>();
+
 export function setupAgentNamespace(ns: Namespace, cfg: Config, certs: ServerCerts): void {
   ns.on('connection', (socket: Socket) => {
     const device = (socket.data as { device?: DeviceTokenPayload }).device!;
@@ -50,7 +53,12 @@ export function setupAgentNamespace(ns: Namespace, cfg: Config, certs: ServerCer
           status: 'online',
           systemInfo: payload.systemInfo,
           timestamp: payload.timestamp,
+          sessionState: payload.sessionState,
         });
+        // Track lock state for device grid badges
+        if (payload.sessionState) {
+          sessionStateStore.set(deviceId, { locked: payload.sessionState.locked, ts: payload.timestamp });
+        }
       } catch (err) {
         log.error('Failed to update agent status:', err);
       }
@@ -93,6 +101,16 @@ export function setupAgentNamespace(ns: Namespace, cfg: Config, certs: ServerCer
       });
     });
 
+    // ---- Session lock/desktop state changes ----
+    socket.on('agent:session-state', (payload: { deviceId: string; sessionState: { locked: boolean }; ts: number }) => {
+      sessionStateStore.set(deviceId, { locked: payload.sessionState.locked, ts: payload.ts });
+      ns.server.of('/dashboard').emit('device:session-state-update', {
+        deviceId,
+        sessionState: payload.sessionState,
+        ts: payload.ts,
+      });
+    });
+
     // ---- Desktop frames (full-res, for RemoteDesktop page) ----
     socket.on('agent:frame', (payload: { header: unknown; data: Buffer | ArrayBuffer | Uint8Array }) => {
       ns.server.of('/dashboard').emit('device:frame-update', {
@@ -128,6 +146,7 @@ export function setupAgentNamespace(ns: Namespace, cfg: Config, certs: ServerCer
       if (liveAgents.get(deviceId) === socket.id) {
         liveAgents.delete(deviceId);
         thumbnailStore.delete(deviceId);
+        sessionStateStore.delete(deviceId);
         await Device.findByIdAndUpdate(deviceId, { status: 'offline', lastSeen: new Date() });
         notifyDashboards(ns.server, deviceId, 'offline');
       }

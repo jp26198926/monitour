@@ -11,6 +11,8 @@ asarUnpack:
   - "**/*.dll"
   - "**/*.exe"
   - "**/*.pdb"
+  - "**/node_modules/node-screenshots/**"
+  - "**/node_modules/koffi/**"
 
 directories:
   output: dist

@@ -294,3 +294,56 @@ function checkMacService(): ServiceStatus {
     return { installed: false, running: false, platform: 'darwin' };
   }
 }
+
+// ---- Lock capture helper task management (Windows only) ----
+const LOCK_TASK_NAME = 'MonitourLockCapture';
+
+function getLockHelperScriptPath(): string {
+  return join(process.cwd(), 'dist', 'main', 'lockCaptureHelper.js');
+}
+
+export function ensureLockCaptureTask(): { success: boolean; message: string } {
+  if (process.platform !== 'win32') return { success: false, message: 'Windows only' };
+  try {
+    const script = getLockHelperScriptPath();
+    const outputDir = join(process.env.TEMP || '.', 'monitour-lock');
+    // Create a one-shot task that runs on demand as SYSTEM
+    const cmd = `schtasks /create /tn "${LOCK_TASK_NAME}" /tr "node \\"${script}\\" --desktop Winlogon --output \\"${outputDir}\\" --fps 10" /sc once /st 00:00 /ru SYSTEM /rl highest /f`;
+    execSync(`powershell -Command "Start-Process cmd -ArgumentList '/c ${cmd}' -Verb RunAs -Wait"`, { encoding: 'utf-8', stdio: 'pipe' });
+    return { success: true, message: 'Lock capture task created' };
+  } catch (err) {
+    return { success: false, message: `Failed to create lock capture task: ${err}` };
+  }
+}
+
+export function startLockCapture(): { success: boolean; message: string } {
+  if (process.platform !== 'win32') return { success: false, message: 'Windows only' };
+  try {
+    execSync(`schtasks /run /tn "${LOCK_TASK_NAME}"`, { encoding: 'utf-8', stdio: 'pipe' });
+    return { success: true, message: 'Lock capture started' };
+  } catch (err) {
+    return { success: false, message: `Failed to start lock capture: ${err}` };
+  }
+}
+
+export function stopLockCapture(): { success: boolean; message: string } {
+  if (process.platform !== 'win32') return { success: false, message: 'Windows only' };
+  try {
+    execSync(`schtasks /end /tn "${LOCK_TASK_NAME}"`, { encoding: 'utf-8', stdio: 'pipe' });
+    return { success: true, message: 'Lock capture stopped' };
+  } catch {
+    // Task may not be running — that's fine
+    return { success: true, message: 'Lock capture not running' };
+  }
+}
+
+export function removeLockCaptureTask(): { success: boolean; message: string } {
+  if (process.platform !== 'win32') return { success: false, message: 'Windows only' };
+  try {
+    stopLockCapture();
+    execSync(`powershell -Command "Start-Process cmd -ArgumentList '/c schtasks /delete /tn \\"${LOCK_TASK_NAME}\\" /f' -Verb RunAs -Wait"`, { encoding: 'utf-8', stdio: 'pipe' });
+    return { success: true, message: 'Lock capture task removed' };
+  } catch (err) {
+    return { success: false, message: `Failed to remove lock capture task: ${err}` };
+  }
+}

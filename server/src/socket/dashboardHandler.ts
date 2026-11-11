@@ -3,7 +3,7 @@ import type { UserTokenPayload } from '../auth/jwt.js';
 import { Device } from '../db/index.js';
 import type { Config } from '../config.js';
 import { createLogger } from '../utils/logger.js';
-import { thumbnailStore } from './agentHandler.js';
+import { thumbnailStore, sessionStateStore } from './agentHandler.js';
 import type { SignalPayload, CommandResultPayload } from '@monitour/shared';
 
 const log = createLogger('dashboard');
@@ -69,6 +69,7 @@ async function sendDeviceList(socket: Socket): Promise<void> {
         systemInfo: d.systemInfo,
         group: d.group ?? null,
         alias: d.alias ?? '',
+        sessionLocked: sessionStateStore.get(d._id.toString())?.locked ?? false,
       })),
     });
   } catch (err) {

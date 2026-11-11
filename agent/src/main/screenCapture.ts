@@ -1,5 +1,5 @@
-import screenshot from 'screenshot-desktop';
 import os from 'node:os';
+import { getActiveBackend, recordCaptureError, recordCaptureSuccess, type RawCapture } from './captureBackend.js';
 
 export interface ScreenFrame {
   data: Buffer;
@@ -10,7 +10,7 @@ export interface ScreenFrame {
 }
 
 export interface CaptureOptions {
-  quality: number; // 1-100 JPEG quality
+  quality: number; // 1-100 JPEG quality (advisory — backend may ignore)
   fps: number; // target frames per second
   maxWidth?: number;
 }
@@ -19,26 +19,25 @@ let captureInterval: ReturnType<typeof setInterval> | null = null;
 let frameSeq = 0;
 
 /**
- * Capture a single screenshot as JPEG.
+ * Capture a single screenshot as JPEG via the active backend.
  */
 export async function captureFrame(options: CaptureOptions): Promise<ScreenFrame> {
-  // screenshot-desktop types don't expose quality; cast options
-  const raw = await screenshot({ format: 'jpg' } as Parameters<typeof screenshot>[0]);
-
-  // Detect screen dimensions from the first display
-  const displays = await screenshot.listDisplays();
-  const primary = displays[0];
-  const width = primary?.width ?? 1920;
-  const height = primary?.height ?? 1080;
-
-  frameSeq++;
-  return {
-    data: Buffer.isBuffer(raw) ? raw : Buffer.from(raw as unknown as ArrayBuffer),
-    width: options.maxWidth ? Math.min(width, options.maxWidth) : width,
-    height: options.maxWidth ? Math.round((height * Math.min(width, options.maxWidth)) / width) : height,
-    seq: frameSeq,
-    timestamp: Date.now(),
-  };
+  const backend = getActiveBackend();
+  try {
+    const raw: RawCapture = await backend.capture();
+    recordCaptureSuccess();
+    frameSeq++;
+    return {
+      data: raw.data,
+      width: options.maxWidth ? Math.min(raw.width, options.maxWidth) : raw.width,
+      height: options.maxWidth ? Math.round((raw.height * Math.min(raw.width, options.maxWidth)) / raw.width) : raw.height,
+      seq: frameSeq,
+      timestamp: Date.now(),
+    };
+  } catch (err) {
+    recordCaptureError();
+    throw err;
+  }
 }
 
 /**
@@ -76,12 +75,7 @@ export function startCapture(options: CaptureOptions, onFrame: (frame: ScreenFra
  * Get the raw screen dimensions of the primary display.
  */
 export async function getRawScreenDimensions(): Promise<{ width: number; height: number }> {
-  const displays = await screenshot.listDisplays();
-  const primary = displays[0];
-  return {
-    width: primary?.width ?? 1920,
-    height: primary?.height ?? 1080,
-  };
+  return getActiveBackend().getScreenSize();
 }
 
 /**
