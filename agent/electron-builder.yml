@@ -37,7 +37,6 @@ files:
   - "!**/node_modules/**/docs/**"
   - "!**/node_modules/node-pty/src/**"
   - "!**/node_modules/node-pty/scripts/**"
-  - "!**/node_modules/koffi/src/**"
   - "!**/node_modules/koffi/doc/**"
 
 win:
