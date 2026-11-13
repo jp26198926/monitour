@@ -194,6 +194,14 @@ function startConnection(credentials: DeviceCredentials): void {
   if (connection) connection.disconnect();
   if (statusTimer) clearInterval(statusTimer);
   connection = new AgentConnection(credentials);
+  connection.onStatusChange = (connected) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('agent-status', {
+        connected,
+        ...(connected ? { lastSeen: Date.now() } : {}),
+      });
+    }
+  };
   connection.onDeviceDeleted = () => {
     // Stop status updates immediately
     if (statusTimer) {
@@ -216,9 +224,10 @@ function startConnection(credentials: DeviceCredentials): void {
   // Send status updates to the renderer periodically
   statusTimer = setInterval(() => {
     if (connection && !connection.deviceDeleted && mainWindow && !mainWindow.isDestroyed()) {
+      const connected = connection.isConnected();
       mainWindow.webContents.send('agent-status', {
-        connected: true,
-        lastSeen: Date.now(),
+        connected,
+        ...(connected ? { lastSeen: Date.now() } : {}),
       });
     }
   }, 10_000);

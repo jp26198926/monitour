@@ -43,9 +43,14 @@ export class AgentConnection {
   private credentials: DeviceCredentials;
   public deviceDeleted = false;
   public onDeviceDeleted?: () => void;
+  public onStatusChange?: (connected: boolean) => void;
 
   constructor(credentials: DeviceCredentials) {
     this.credentials = credentials;
+  }
+
+  isConnected(): boolean {
+    return this.socket?.connected ?? false;
   }
 
   connect(): void {
@@ -63,6 +68,7 @@ export class AgentConnection {
 
     this.socket.on('connect', () => {
       console.log(`Connected to server (socket=${this.socket?.id})`);
+      this.onStatusChange?.(true);
       void getRawScreenDimensions().then((dims) => setScreenDimensions(dims.width, dims.height));
       this.sendStatus();
       this.startThumbnailCapture();
@@ -71,11 +77,13 @@ export class AgentConnection {
 
     this.socket.on('disconnect', (reason) => {
       console.log(`Disconnected from server: ${reason}`);
+      this.onStatusChange?.(false);
       this.stopThumbnailCapture();
     });
 
     this.socket.on('connect_error', (err) => {
       console.error('Connection error:', err.message);
+      this.onStatusChange?.(false);
     });
 
     // ---- Handle commands from server ----

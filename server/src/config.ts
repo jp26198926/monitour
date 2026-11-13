@@ -15,6 +15,8 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   /** Log level */
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  /** Max agent-update upload size in bytes. */
+  MAX_UPLOAD_SIZE: z.coerce.number().int().positive().default(2 * 1024 * 1024 * 1024), // 2 GiB
 });
 
 export type Config = z.infer<typeof envSchema> & {

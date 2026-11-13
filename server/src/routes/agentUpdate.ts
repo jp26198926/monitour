@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { readFileSync, existsSync, readdirSync, statSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import multer from 'multer';
 import { requireAuth, requireRole } from '../auth/middleware.js';
@@ -12,14 +12,6 @@ const log = createLogger('update');
 function getUpdatesDir(): string {
   return join(process.cwd(), 'updates');
 }
-
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, getUpdatesDir()),
-    filename: (_req, file, cb) => cb(null, basename(file.originalname)),
-  }),
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB max
-});
 
 function readManifest(): UpdateManifest | null {
   const manifestPath = join(getUpdatesDir(), 'manifest.json');
@@ -44,6 +36,14 @@ function compareVersions(a: string, b: string): number {
 
 export function agentUpdateRoutes(cfg: Config): Router {
   const router = Router();
+  mkdirSync(getUpdatesDir(), { recursive: true });
+  const upload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, getUpdatesDir()),
+      filename: (_req, file, cb) => cb(null, basename(file.originalname)),
+    }),
+    limits: { fileSize: cfg.MAX_UPLOAD_SIZE },
+  });
 
   // GET /api/agent/update-check — agent checks if an update is available
   // Auth: optional (device token or user token)

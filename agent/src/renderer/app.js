@@ -174,9 +174,19 @@ ipcRenderer.on('app-state', (_e, state) => {
   }
 });
 
+let wasConnected = false;
 ipcRenderer.on('agent-status', (_e, data) => {
-  statusDot.className = 'status-dot ' + (data.connected ? 'online' : 'connecting');
-  statusLabel.textContent = data.connected ? 'Connected' : 'Connecting…';
+  if (data.connected) {
+    wasConnected = true;
+    statusDot.className = 'status-dot online';
+    statusLabel.textContent = 'Connected';
+  } else if (wasConnected) {
+    statusDot.className = 'status-dot offline';
+    statusLabel.textContent = 'Disconnected — reconnecting…';
+  } else {
+    statusDot.className = 'status-dot connecting';
+    statusLabel.textContent = 'Connecting…';
+  }
   if (data.lastSeen) infoLastSeen.textContent = new Date(data.lastSeen).toLocaleTimeString();
 });
 

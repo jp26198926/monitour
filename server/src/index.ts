@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
+import multer from 'multer';
 import { createServer } from 'node:http';
 import { Server as SocketIOServer } from 'socket.io';
 import { loadConfig } from './config.js';
@@ -58,13 +59,34 @@ async function main(): Promise<void> {
   });
 
   // Error handler
-  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      const gb = cfg.MAX_UPLOAD_SIZE / 1024 ** 3;
+      const label = Number.isInteger(gb) ? `${gb} GB` : `${gb.toFixed(1)} GB`;
+      res.status(413).json({ error: `File too large — maximum upload size is ${label}` });
+      return;
+    }
+    if (err instanceof multer.MulterError) {
+      res.status(400).json({ error: `Upload failed: ${err.message}` });
+      return;
+    }
+    const e = err as { code?: string; status?: number; statusCode?: number; message?: string };
+    if (e?.code === 'ENOSPC') {
+      res.status(507).json({ error: 'Server storage is full — cannot store the uploaded file' });
+      return;
+    }
+    const status = e?.status ?? e?.statusCode;
+    if (typeof status === 'number' && status >= 400 && status < 500) {
+      res.status(status).json({ error: e.message || 'Bad request' });
+      return;
+    }
     log.error('Unhandled error:', err);
     res.status(500).json({ error: 'Internal server error' });
   });
 
   // HTTP + Socket.IO
   const httpServer = createServer(app);
+  httpServer.requestTimeout = 0; // Node's 300s default kills slow multi-hundred-MB uploads
   const io = new SocketIOServer(httpServer, {
     cors: { origin: cfg.corsOrigins, credentials: true },
     maxHttpBufferSize: 10 * 1024 * 1024, // 10 MB for file chunks

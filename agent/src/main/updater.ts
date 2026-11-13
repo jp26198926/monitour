@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdirSync, existsSync, createWriteStream, rmSync } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import { join, basename } from 'node:path';
 import { homedir, platform, arch } from 'node:os';
 import { exec } from 'node:child_process';
@@ -57,11 +58,16 @@ export async function downloadUpdate(serverUrl: string, manifest: UpdateManifest
 
   console.log(`Downloading update ${manifest.version} from ${manifest.downloadUrl}`);
   const resp = await axios.get(manifest.downloadUrl.startsWith('http') ? manifest.downloadUrl : `${serverUrl}${manifest.downloadUrl}`, {
-    responseType: 'arraybuffer',
-    timeout: 300_000, // 5 min for large files
+    responseType: 'stream',
+    timeout: 0, // no cap — a 500MB+ package on a slow link legitimately takes a long time
   });
 
-  writeFileSync(filepath, Buffer.from(resp.data));
+  try {
+    await pipeline(resp.data, createWriteStream(filepath));
+  } catch (err) {
+    rmSync(filepath, { force: true }); // never leave a truncated installer behind (applyUpdate executes it)
+    throw err;
+  }
   console.log(`Update downloaded: ${filepath}`);
   return filepath;
 }
