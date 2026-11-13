@@ -4,17 +4,16 @@ import {
   enroll,
   saveAgentConfig,
   loadOrCreateKeyPair,
+  getAgentVersion,
   type AgentConfig,
   type DeviceCredentials,
 } from './enrollment.js';
 import { AgentConnection } from './connection.js';
 import { getScreenInfo } from './screenCapture.js';
 
-const AGENT_VERSION = '0.2.0';
-
 async function main(): Promise<void> {
   console.log('========================================');
-  console.log(`  Monitour Agent v${AGENT_VERSION}`);
+  console.log(`  Monitour Agent v${getAgentVersion()}`);
   console.log('========================================');
 
   // Load or prompt for config

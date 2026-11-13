@@ -178,6 +178,10 @@ export enum AgentEvent {
   UpdateResult = 'agent:update-result',
   /** Session lock/desktop state change */
   SessionState = 'agent:session-state',
+  /** Cursor position/visibility sample (on change, ~30 Hz max) */
+  Cursor = 'agent:cursor',
+  /** Cursor bitmap, sent once per shape change */
+  CursorShape = 'agent:cursor-shape',
 }
 
 // Server -> Agent events
@@ -279,6 +283,10 @@ export enum DashboardEvent {
   Signal = 'dash:signal',
   /** Ping */
   Ping = 'dash:ping',
+  /** Cursor position/visibility sample (server -> dashboard) */
+  CursorUpdate = 'device:cursor-update',
+  /** Cursor bitmap (server -> dashboard) */
+  CursorShape = 'device:cursor-shape',
 }
 
 // -----------------------------------------------------------------------------
@@ -305,6 +313,32 @@ export type InputEvent =
   | { type: 'wheel'; x: number; y: number; deltaX: number; deltaY: number }
   | { type: 'keydown'; key: string; code: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean }
   | { type: 'keyup'; key: string; code: string };
+
+/** Raw cursor bitmap — BGRA, 4 bytes/pixel, row-major, top-down. length = w*h*4 */
+export interface CursorShape {
+  /** Monotonic per-agent-run id; bumps whenever the bitmap changes. */
+  shapeId: number;
+  width: number;
+  height: number;
+  /** Hotspot in bitmap pixels (from GetIconInfo xHotspot/yHotspot). */
+  hotspotX: number;
+  hotspotY: number;
+  /** Over the wire this arrives as a Socket.IO binary attachment (ArrayBuffer on the client). */
+  pixels: Uint8Array;
+}
+
+/** Cursor position/visibility sample. Percent 0–100 float of primary monitor — same space as InputEvent. */
+export interface CursorState {
+  deviceId: string;
+  sessionId: string;
+  x: number;
+  y: number;
+  /** false when CURSOR_SHOWING is unset or the cursor is outside the primary monitor. */
+  visible: boolean;
+  /** Which shape the cursor currently has (see CursorShape.shapeId). */
+  shapeId: number;
+  ts: number;
+}
 
 export type TerminalMessage =
   | { type: 'open'; cols: number; rows: number; shell?: string }

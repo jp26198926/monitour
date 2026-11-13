@@ -527,10 +527,27 @@ input:focus, select:focus {
   cursor: crosshair;
 }
 
+/* While the remote cursor overlay is active, hide the browser cursor entirely —
+   the overlay shows the remote client's real cursor at the operator's pointer. */
+.desktop-container.controlling.remote-cursor-active,
+.desktop-container.controlling.remote-cursor-active canvas,
+.desktop-container.controlling.remote-cursor-active img {
+  cursor: none;
+}
+
 .desktop-container canvas, .desktop-container img {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.desktop-remote-cursor {
+  position: absolute;
+  pointer-events: none;
+  z-index: 11;
+  display: none;
+  image-rendering: pixelated;
+  /* width/height/left/top are set from JS (hotspot math); no translate */
 }
 
 .desktop-overlay {

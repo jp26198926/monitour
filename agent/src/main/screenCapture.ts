@@ -47,7 +47,7 @@ export async function captureFrame(options: CaptureOptions): Promise<ScreenFrame
 export function startCapture(options: CaptureOptions, onFrame: (frame: ScreenFrame) => void): () => void {
   if (captureInterval) clearInterval(captureInterval);
 
-  const intervalMs = Math.max(50, Math.round(1000 / options.fps));
+  const intervalMs = Math.max(33, Math.round(1000 / options.fps));
   let busy = false;
 
   captureInterval = setInterval(async () => {

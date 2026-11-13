@@ -103,6 +103,9 @@ sudo ufw enable
 ```bash
 cd /opt/monitour/agent
 
+# Start from a clean tree (removes previous out/ and dist/ artifacts)
+npm run clean
+
 # Windows installer
 npm run dist -- --win
 
@@ -113,7 +116,13 @@ npm run dist -- --mac
 npm run dist -- --linux
 ```
 
-Output is in `agent/dist/`. Distribute the installer to end-user machines.
+Compiled JS lands in `agent/out/`; installers land in `agent/dist/`. Distribute the
+installer to end-user machines (and upload it to the server — the agent self-updater
+downloads it from the server's `downloadUrl`, not from this folder).
+
+Note: installers are Electron-based, so expect roughly 90–130 MB each — the Electron/
+Chromium runtime is the floor. Stale installers must never be present while packaging;
+`npm run clean` guarantees this.
 
 ## Monitoring & Maintenance
 

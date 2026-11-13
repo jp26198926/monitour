@@ -5,24 +5,40 @@ copyright: Copyright © 2025 Monitour
 # Native modules (node-pty, libnut) ship prebuilt binaries — skip recompilation
 npmRebuild: false
 
-# Unpack .node binaries from asar so they can be loaded at runtime
+# Unpack native binaries from asar so they can be loaded/spawned at runtime
 asarUnpack:
   - "**/*.node"
   - "**/*.dll"
-  - "**/*.exe"
-  - "**/*.pdb"
-  - "**/node_modules/node-screenshots/**"
-  - "**/node_modules/koffi/**"
+  - "**/node_modules/node-pty/**/*.exe"
+  - "**/node_modules/node-pty/prebuilds/**"
+  - "**/node_modules/node-pty/build/**"
+  - "**/node_modules/koffi/build/**"
+  - "**/node_modules/node-screenshots*/**"
 
 directories:
   output: dist
   buildResources: build
 
+# Production deps are auto-collected by electron-builder; `files` only
+# controls app files and exclusions. Never add node_modules/** here — the
+# hoisted root tree would drag in every workspace's dependencies.
 files:
-  - dist/**
+  - out/**
   - src/renderer/**
-  - node_modules/**
   - package.json
+  - "!**/*.map"
+  - "!**/*.d.ts"
+  - "!**/*.pdb"
+  - "!**/node_modules/**/README*"
+  - "!**/node_modules/**/CHANGELOG*"
+  - "!**/node_modules/**/*.md"
+  - "!**/node_modules/**/test/**"
+  - "!**/node_modules/**/tests/**"
+  - "!**/node_modules/**/docs/**"
+  - "!**/node_modules/node-pty/src/**"
+  - "!**/node_modules/node-pty/scripts/**"
+  - "!**/node_modules/koffi/src/**"
+  - "!**/node_modules/koffi/doc/**"
 
 win:
   target:

@@ -1,12 +1,11 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { generateKeyPairSync, createHash, randomBytes } from 'node:crypto';
 import forge from 'node-forge';
 import axios from 'axios';
 import bcrypt from 'bcryptjs';
-
-const AGENT_VERSION = '0.2.0';
 
 export interface AgentConfig {
   serverUrl: string;
@@ -148,7 +147,7 @@ export async function enroll(cfg: AgentConfig): Promise<DeviceCredentials> {
       hostname,
       platform: process.platform,
       arch: process.arch,
-      agentVersion: AGENT_VERSION,
+      agentVersion: getAgentVersion(),
       publicKeyPem,
     },
     { timeout: 15_000 },
@@ -174,6 +173,17 @@ export function verifyServerCertHash(expectedHash: string, actualCertPem: string
   return actualHash === expectedHash;
 }
 
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+let cachedVersion: string | null = null;
+
 export function getAgentVersion(): string {
-  return AGENT_VERSION;
+  if (cachedVersion === null) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(moduleDir, '../../package.json'), 'utf8')) as { version?: string };
+      cachedVersion = pkg.version || '0.0.0';
+    } catch {
+      cachedVersion = '0.0.0';
+    }
+  }
+  return cachedVersion;
 }

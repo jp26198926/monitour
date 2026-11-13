@@ -69,7 +69,7 @@ export function DevicesPage() {
       }
 
       if (token && !cancelled) {
-        s = io('/dashboard', { auth: { token } });
+        s = io('/dashboard', { auth: { token }, transports: ['websocket'] });
         s.on('dash:devices-update', (payload: { devices: DeviceInfo[] }) => {
           if (!cancelled) setDevices(payload.devices);
         });
@@ -297,6 +297,7 @@ export function DevicesPage() {
                 <th>Group</th>
                 <th>Hostname</th>
                 <th>Platform</th>
+                <th>Agent Version</th>
                 <th>Last Seen</th>
                 <th>Actions</th>
               </tr>
@@ -312,6 +313,7 @@ export function DevicesPage() {
                   <td style={{ color: 'var(--text-secondary)' }}>{d.group || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                   <td style={{ color: 'var(--text-secondary)' }}>{d.hostname}</td>
                   <td style={{ color: 'var(--text-secondary)' }}>{d.platform}</td>
+                  <td style={{ color: 'var(--text-secondary)' }}>{d.agentVersion}</td>
                   <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>
                     {d.lastSeen ? new Date(d.lastSeen).toLocaleString() : 'Never'}
                   </td>
@@ -371,7 +373,10 @@ export function DevicesPage() {
                   <div className="device-card-info">
                     <div className="device-card-name">{displayName(d)}</div>
                     <div className="device-card-meta">
-                      <span>{d.group || d.hostname || d.platform}</span>
+                      <span>
+                        {d.group || d.hostname || d.platform}
+                        <span className="device-card-time"> v{d.agentVersion}</span>
+                      </span>
                       <span className="device-card-time">{d.lastSeen ? new Date(d.lastSeen).toLocaleTimeString() : ''}</span>
                     </div>
                   </div>

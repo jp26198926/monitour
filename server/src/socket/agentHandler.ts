@@ -7,10 +7,13 @@ import { createLogger } from '../utils/logger.js';
 import { liveAgents } from './index.js';
 import {
   AgentEvent,
+  DashboardEvent,
   ServerEvent,
   type AgentStatusPayload,
   type CommandPayload,
   type CommandResultPayload,
+  type CursorShape,
+  type CursorState,
   type SignalPayload,
 } from '@monitour/shared';
 
@@ -18,6 +21,9 @@ const log = createLogger('agent');
 
 /** Latest thumbnail per device (base64 JPEG). */
 export const thumbnailStore = new Map<string, { data: string; ts: number }>();
+
+/** Latest cursor shape per device, replayed to late-joining dashboards. */
+export const cursorShapeStore = new Map<string, { shape: CursorShape; ts: number }>();
 
 /** Latest session lock state per device. */
 export const sessionStateStore = new Map<string, { locked: boolean; ts: number }>();
@@ -130,6 +136,20 @@ export function setupAgentNamespace(ns: Namespace, cfg: Config, certs: ServerCer
       });
     });
 
+    // ---- Remote cursor (position + shape, for RemoteDesktop overlay) ----
+    socket.on(AgentEvent.Cursor, (payload: CursorState) => {
+      ns.server.of('/dashboard').emit(DashboardEvent.CursorUpdate, { ...payload, deviceId });
+    });
+
+    socket.on(AgentEvent.CursorShape, (payload: { shape: CursorShape; ts: number }) => {
+      cursorShapeStore.set(deviceId, { shape: payload.shape, ts: payload.ts });
+      ns.server.of('/dashboard').emit(DashboardEvent.CursorShape, {
+        deviceId,
+        shape: payload.shape,
+        ts: payload.ts,
+      });
+    });
+
     // ---- Terminal data from agent ----
     socket.on('agent:terminal-data', (payload: { sessionId: string; data: string }) => {
       ns.server.of('/dashboard').emit('device:terminal-data', {
@@ -156,6 +176,7 @@ export function setupAgentNamespace(ns: Namespace, cfg: Config, certs: ServerCer
       if (liveAgents.get(deviceId) === socket.id) {
         liveAgents.delete(deviceId);
         thumbnailStore.delete(deviceId);
+        cursorShapeStore.delete(deviceId);
         sessionStateStore.delete(deviceId);
         await Device.findByIdAndUpdate(deviceId, { status: 'offline', lastSeen: new Date() });
         notifyDashboards(ns.server, deviceId, 'offline');
@@ -169,6 +190,15 @@ export function setupAgentNamespace(ns: Namespace, cfg: Config, certs: ServerCer
     dashSocket.on('dash:request-thumbnails', () => {
       const thumbnails = Object.fromEntries(thumbnailStore);
       dashSocket.emit('dash:thumbnails', thumbnails);
+    });
+
+    // Replay the latest cursor shape so a freshly opened RemoteDesktop page
+    // doesn't wait for the next shape change to show the right icon.
+    dashSocket.on('dash:request-cursor-shape', (deviceId: string) => {
+      const cached = cursorShapeStore.get(deviceId);
+      if (cached) {
+        dashSocket.emit(DashboardEvent.CursorShape, { deviceId, shape: cached.shape, ts: cached.ts });
+      }
     });
 
     dashSocket.on('dash:send-command', (payload: { deviceId: string; command: CommandPayload }) => {

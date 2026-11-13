@@ -205,8 +205,12 @@ export function sendInputEvent(event: InputEvent): boolean {
       ]);
     }
     case 'wheel': {
+      const { x, y } = toAbsoluteCoords(event.x, event.y);
       const delta = event.deltaY > 0 ? 120 : -120;
-      return sendInputs([buildMouseInput(0, 0, MOUSEEVENTF_WHEEL, delta)]);
+      return sendInputs([
+        buildMouseInput(x, y, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE),
+        buildMouseInput(0, 0, MOUSEEVENTF_WHEEL, delta),
+      ]);
     }
     case 'keydown': {
       const inputs: Buffer[] = [];

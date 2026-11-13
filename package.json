@@ -19,7 +19,7 @@
     "build:shared": "npm run build --workspace shared",
     "build:server": "npm run build --workspace server",
     "build:dashboard": "npm run build --workspace dashboard",
-    "build:agent": "npm run build --workspace agent && npm run dist --workspace agent",
+    "build:agent": "npm run clean --workspace agent && npm run build --workspace agent && npm run dist --workspace agent",
     "start:server": "npm run start --workspace server",
     "lint": "eslint .",
     "typecheck": "tsc -b shared server dashboard agent"

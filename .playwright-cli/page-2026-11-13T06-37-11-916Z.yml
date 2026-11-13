@@ -1,0 +1,15 @@
+- generic [ref=e4]:
+  - heading "Monitour" [level=1] [ref=e5]
+  - paragraph [ref=e6]: Sign in to your account
+  - generic [ref=e7]:
+    - generic [ref=e8]:
+      - generic [ref=e9]: Username
+      - textbox "admin" [active] [ref=e10]
+    - generic [ref=e11]:
+      - generic [ref=e12]: Password
+      - textbox "••••••••" [ref=e13]
+    - button "Sign In" [ref=e14] [cursor=pointer]
+  - paragraph [ref=e15]:
+    - text: First time?
+    - link "Create admin account" [ref=e16] [cursor=pointer]:
+      - /url: "#"

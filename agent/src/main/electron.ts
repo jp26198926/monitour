@@ -65,7 +65,7 @@ ipcMain.on('app-ready', () => {
       deviceId: state.credentials.deviceId,
       serverUrl: state.credentials.serverUrl,
       platform: `${info.platform} ${info.arch}`,
-      agentVersion: '0.2.0',
+      agentVersion: getAgentVersion(),
     });
   } else {
     mainWindow?.webContents.send('app-state', {
@@ -98,7 +98,7 @@ ipcMain.handle('enroll', async (_e, data: { serverUrl: string; enrollToken: stri
         deviceId: credentials.deviceId,
         serverUrl: credentials.serverUrl,
         platform: `${info.platform} ${info.arch}`,
-        agentVersion: '0.2.0',
+        agentVersion: getAgentVersion(),
       },
     };
   } catch (err) {

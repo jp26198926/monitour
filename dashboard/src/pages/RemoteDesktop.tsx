@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { io, type Socket } from 'socket.io-client';
 import { useAuthStore } from '../store';
 import { api } from '../api/client';
-import type { InputEvent, CommandPayload } from '@monitour/shared';
+import type { InputEvent, CommandPayload, CursorShape, CursorState } from '@monitour/shared';
+import { DashboardEvent } from '@monitour/shared';
 
 interface DesktopState {
   status: 'idle' | 'connecting' | 'connected' | 'disconnected';
@@ -21,36 +22,62 @@ export function RemoteDesktopPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const cursorRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const remoteCursorRef = useRef<HTMLCanvasElement>(null);
+  const shapeRef = useRef<CursorShape | null>(null);
+  const remotePosRef = useRef<{ x: number; y: number; visible: boolean }>({ x: 50, y: 50, visible: true });
+  const controlRef = useRef(false);
   const socketRef = useRef<Socket | null>(null);
   const frameCountRef = useRef(0);
   const lastFpsTimeRef = useRef(Date.now());
+  const pendingFrameRef = useRef<ArrayBuffer | Uint8Array | null>(null);
+  const decodingRef = useRef(false);
+  const objectUrlRef = useRef<string | null>(null);
 
   const [rtc, setRtc] = useState<DesktopState>({ status: 'idle', fps: 0, resolution: '', lastFrameAt: null, deviceOnline: false });
   const [controlEnabled, setControlEnabled] = useState(false);
+  const [remoteCursorActive, setRemoteCursorActive] = useState(false);
   const [sessionState, setSessionState] = useState<{ locked: boolean; secureDesktop: boolean }>({ locked: false, secureDesktop: false });
   const [sessionId] = useState(() => `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
-  // ---- Frame rendering ----
-  const renderFrame = useCallback((data: ArrayBuffer | Uint8Array) => {
-    const blob = new Blob([data as BlobPart], { type: 'image/jpeg' });
-    const url = URL.createObjectURL(blob);
+  controlRef.current = controlEnabled;
+
+  // ---- Frame rendering (latest-frame-wins: only the newest frame is decoded) ----
+  const pump = useCallback(() => {
+    if (decodingRef.current) return;
+    const data = pendingFrameRef.current;
+    if (!data) return;
+    pendingFrameRef.current = null;
+    decodingRef.current = true;
 
     const img = imgRef.current;
-    if (img) {
-      img.onload = () => {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            canvas.width = img.naturalWidth;
-            canvas.height = img.naturalHeight;
-            ctx.drawImage(img, 0, 0);
-          }
-        }
-        URL.revokeObjectURL(url);
-      };
-      img.src = url;
+    if (!img) {
+      decodingRef.current = false;
+      return;
     }
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'image/jpeg' }));
+    objectUrlRef.current = url;
+
+    img.onload = () => {
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (canvas && ctx) {
+        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+        }
+        ctx.drawImage(img, 0, 0);
+      }
+      decodingRef.current = false;
+      pump();
+    };
+    img.src = url;
+  }, []);
+
+  const renderFrame = useCallback((data: ArrayBuffer | Uint8Array) => {
+    pendingFrameRef.current = data;
+    pump();
 
     frameCountRef.current++;
     const now = Date.now();
@@ -63,19 +90,24 @@ export function RemoteDesktopPage() {
       frameCountRef.current = 0;
       lastFpsTimeRef.current = now;
     }
-  }, []);
+  }, [pump]);
 
   // Hide cursor when control is disabled
   useEffect(() => {
     if (!controlEnabled) hideCursor();
   }, [controlEnabled]);
 
+  // Hide the remote cursor whenever the stream is not live
+  useEffect(() => {
+    if (rtc.status !== 'connected') hideRemoteCursor();
+  }, [rtc.status]);
+
   // ---- Setup Socket.IO connection ----
   useEffect(() => {
     if (!deviceId || !token) return;
 
     let cancelled = false;
-    const socket = io('/dashboard', { auth: { token } });
+    const socket = io('/dashboard', { auth: { token }, transports: ['websocket'] });
     socketRef.current = socket;
 
     setRtc((s) => ({ ...s, status: 'connecting' }));
@@ -89,7 +121,8 @@ export function RemoteDesktopPage() {
 
     socket.on('connect', () => {
       // Don't set status to 'connected' yet — wait for frames
-      sendCommand('desktop:start', { quality: 70, fps: 15 });
+      sendCommand('desktop:start', { quality: 70, fps: 30 });
+      socket.emit('dash:request-cursor-shape', deviceId);
     });
 
     // Receive frames via Socket.IO (server relays agent frames here)
@@ -106,6 +139,38 @@ export function RemoteDesktopPage() {
       }
 
       renderFrame(payload.data);
+    });
+
+    // ---- Remote cursor (position + shape) ----
+    socket.on(DashboardEvent.CursorUpdate, (payload: CursorState) => {
+      if (payload.deviceId !== deviceId) return;
+      remotePosRef.current = { x: payload.x, y: payload.y, visible: payload.visible };
+      // While controlling, position is predicted locally — only visibility comes from the agent.
+      if (!controlRef.current) placeRemoteCursor(payload.x, payload.y);
+    });
+
+    socket.on(DashboardEvent.CursorShape, (payload: { deviceId: string; shape: CursorShape }) => {
+      if (payload.deviceId !== deviceId) return;
+      const shape = payload.shape;
+      if (shapeRef.current && shape.shapeId <= shapeRef.current.shapeId) return;
+
+      const raw = shape.pixels instanceof Uint8Array ? shape.pixels : new Uint8Array(shape.pixels as unknown as ArrayBuffer);
+      const rgba = new Uint8ClampedArray(raw.length);
+      for (let i = 0; i < raw.length; i += 4) {
+        rgba[i] = raw[i + 2]; // BGRA -> RGBA
+        rgba[i + 1] = raw[i + 1];
+        rgba[i + 2] = raw[i];
+        rgba[i + 3] = raw[i + 3];
+      }
+      const el = remoteCursorRef.current;
+      const ctx = el?.getContext('2d');
+      if (el && ctx && rgba.length === shape.width * shape.height * 4) {
+        el.width = shape.width;
+        el.height = shape.height;
+        ctx.putImageData(new ImageData(rgba, shape.width, shape.height), 0, 0);
+      }
+      shapeRef.current = shape;
+      setRemoteCursorActive(true);
     });
 
     socket.on('connect_error', () => {
@@ -130,10 +195,14 @@ export function RemoteDesktopPage() {
       }));
       if (!online) {
         setControlEnabled(false);
+        // A fresh agent run starts shapeIds over — drop any stale cursor data.
+        shapeRef.current = null;
+        setRemoteCursorActive(false);
+        hideRemoteCursor();
       } else {
         // Device just came back online — restart the stream
         setRtc((s) => ({ ...s, lastFrameAt: Date.now(), status: 'connecting' }));
-        sendCommand('desktop:start', { quality: 70, fps: 15 });
+        sendCommand('desktop:start', { quality: 70, fps: 30 });
       }
     });
 
@@ -206,13 +275,15 @@ export function RemoteDesktopPage() {
     return Math.max(min, Math.min(max, v));
   }
 
-  function toPercent(e: React.MouseEvent): { x: number; y: number; containerRect: DOMRect; displayW: number; displayH: number; offsetX: number; offsetY: number } | null {
-    const containerRect = e.currentTarget.getBoundingClientRect();
+  function toPercent(clientX: number, clientY: number): { x: number; y: number; displayW: number; displayH: number; offsetX: number; offsetY: number } | null {
+    const container = containerRef.current;
+    if (!container) return null;
+    const containerRect = container.getBoundingClientRect();
     const { displayW, displayH, offsetX, offsetY } = getLetterbox(containerRect);
     if (!displayW || !displayH) return null;
-    const x = clamp(((e.clientX - containerRect.left - offsetX) / displayW) * 100, 0, 100);
-    const y = clamp(((e.clientY - containerRect.top - offsetY) / displayH) * 100, 0, 100);
-    return { x, y, containerRect, displayW, displayH, offsetX, offsetY };
+    const x = clamp(((clientX - containerRect.left - offsetX) / displayW) * 100, 0, 100);
+    const y = clamp(((clientY - containerRect.top - offsetY) / displayH) * 100, 0, 100);
+    return { x, y, displayW, displayH, offsetX, offsetY };
   }
 
   function updateCursor(x: number, y: number, displayW: number, displayH: number, offsetX: number, offsetY: number) {
@@ -227,37 +298,68 @@ export function RemoteDesktopPage() {
     if (cursorRef.current) cursorRef.current.style.display = 'none';
   }
 
+  /** Place the remote-cursor overlay so its hotspot lands exactly on (pctX, pctY) of the remote screen. */
+  function placeRemoteCursor(pctX: number, pctY: number) {
+    const el = remoteCursorRef.current;
+    const shape = shapeRef.current;
+    const container = containerRef.current;
+    if (!el || !shape || !container) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const { displayW, displayH, offsetX, offsetY } = getLetterbox(containerRect);
+    const scale = displayW / (canvasRef.current?.width || 1);
+
+    el.style.width = `${shape.width * scale}px`;
+    el.style.height = `${shape.height * scale}px`;
+    el.style.left = `${offsetX + (pctX / 100) * displayW - shape.hotspotX * scale}px`;
+    el.style.top = `${offsetY + (pctY / 100) * displayH - shape.hotspotY * scale}px`;
+    el.style.display = remotePosRef.current.visible ? 'block' : 'none';
+  }
+
+  function hideRemoteCursor() {
+    if (remoteCursorRef.current) remoteCursorRef.current.style.display = 'none';
+  }
+
   // ---- Mouse/keyboard handlers (only active when controlEnabled) ----
   function handleMouseDown(e: React.MouseEvent) {
     if (!controlEnabled) return;
-    const pos = toPercent(e);
+    const pos = toPercent(e.clientX, e.clientY);
     if (!pos) return;
-    updateCursor(pos.x, pos.y, pos.displayW, pos.displayH, pos.offsetX, pos.offsetY);
+    if (remoteCursorActive) {
+      placeRemoteCursor(pos.x, pos.y);
+    } else {
+      updateCursor(pos.x, pos.y, pos.displayW, pos.displayH, pos.offsetX, pos.offsetY);
+    }
     sendInput({ type: 'mousedown', x: pos.x, y: pos.y, button: e.button });
   }
 
   function handleMouseUp(e: React.MouseEvent) {
     if (!controlEnabled) return;
-    const pos = toPercent(e);
+    const pos = toPercent(e.clientX, e.clientY);
     if (!pos) return;
     sendInput({ type: 'mouseup', x: pos.x, y: pos.y, button: e.button });
   }
 
   function handleMouseMove(e: React.MouseEvent) {
     if (!controlEnabled) return;
-    const pos = toPercent(e);
+    const pos = toPercent(e.clientX, e.clientY);
     if (!pos) return;
-    updateCursor(pos.x, pos.y, pos.displayW, pos.displayH, pos.offsetX, pos.offsetY);
+    if (remoteCursorActive) {
+      // Local prediction: the overlay tracks the operator's pointer with zero lag;
+      // the agent-supplied shape (which follows after ~1 RTT) is drawn on top.
+      hideCursor();
+      placeRemoteCursor(pos.x, pos.y);
+    } else {
+      updateCursor(pos.x, pos.y, pos.displayW, pos.displayH, pos.offsetX, pos.offsetY);
+    }
     sendInput({ type: 'mousemove', x: pos.x, y: pos.y });
   }
 
   function handleMouseLeave() {
     hideCursor();
-  }
-
-  function handleWheel(e: React.WheelEvent) {
-    if (!controlEnabled) return;
-    sendInput({ type: 'wheel', x: 50, y: 50, deltaX: e.deltaX, deltaY: e.deltaY });
+    // While controlling the overlay tracks the local pointer, so it leaves with it.
+    // In view-only it shows the remote user's cursor and must stay.
+    if (controlRef.current) hideRemoteCursor();
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -283,6 +385,23 @@ export function RemoteDesktopPage() {
     });
     e.preventDefault();
   }
+
+  // Wheel needs a native listener: React's synthetic wheel is passive, so
+  // preventDefault() there cannot stop page scroll.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (!controlRef.current) return;
+      const pos = toPercent(e.clientX, e.clientY);
+      if (!pos) return;
+      sendInput({ type: 'wheel', x: pos.x, y: pos.y, deltaX: e.deltaX, deltaY: e.deltaY });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sendInput]);
 
   return (
     <div>
@@ -337,21 +456,24 @@ export function RemoteDesktopPage() {
       </div>
 
       <div
-        className={`desktop-container ${controlEnabled ? 'controlling' : 'view-only'}`}
+        ref={containerRef}
+        className={`desktop-container ${controlEnabled ? 'controlling' : 'view-only'}${remoteCursorActive ? ' remote-cursor-active' : ''}`}
         tabIndex={0}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
-        onWheel={handleWheel}
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}
       >
         <img ref={imgRef} style={{ display: 'none' }} alt="" />
         <canvas ref={canvasRef} />
 
-        {/* Virtual cursor overlay */}
+        {/* Fallback marker (operator's pointer) — only before real cursor data arrives */}
         <div ref={cursorRef} className="desktop-cursor" />
+
+        {/* Remote client's real cursor (position + shape) */}
+        <canvas ref={remoteCursorRef} className="desktop-remote-cursor" />
 
         {/* Overlay badge */}
         <div className="desktop-overlay">

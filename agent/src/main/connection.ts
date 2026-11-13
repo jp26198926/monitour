@@ -6,6 +6,7 @@ import {
   type DeviceCredentials,
 } from './enrollment.js';
 import { startCapture, captureFrame, getScreenInfo, getRawScreenDimensions, type ScreenFrame } from './screenCapture.js';
+import { startCursorCapture } from './cursorCapture.js';
 import { handleInputEvent, setScreenDimensions, setSessionState as setInjectorSessionState } from './inputInjector.js';
 import { refreshSessionState, getSessionState, onSessionStateChange, type SessionState } from './lockState.js';
 import { getActiveBackend } from './captureBackend.js';
@@ -38,6 +39,7 @@ export class AgentConnection {
   private socket: Socket | null = null;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   private stopCapture: (() => void) | null = null;
+  private stopCursorCapture: (() => void) | null = null;
   private thumbTimer: ReturnType<typeof setInterval> | null = null;
   private thumbBusy = false;
   private credentials: DeviceCredentials;
@@ -478,6 +480,27 @@ export class AgentConnection {
       this.sendDesktopFrame(sessionId, frame);
     });
 
+    this.stopCursorCapture = startCursorCapture({
+      onState: (s) => {
+        this.socket?.emit(AgentEvent.Cursor, {
+          deviceId: this.credentials.deviceId,
+          sessionId,
+          x: s.x,
+          y: s.y,
+          visible: s.visible,
+          shapeId: s.shapeId,
+          ts: Date.now(),
+        });
+      },
+      onShape: (shape) => {
+        this.socket?.emit(AgentEvent.CursorShape, {
+          deviceId: this.credentials.deviceId,
+          shape,
+          ts: Date.now(),
+        });
+      },
+    });
+
     console.log(`Desktop capture started (session=${sessionId}, q=${quality}, fps=${fps})`);
   }
 
@@ -486,6 +509,10 @@ export class AgentConnection {
       this.stopCapture();
       this.stopCapture = null;
       console.log('Desktop capture stopped');
+    }
+    if (this.stopCursorCapture) {
+      this.stopCursorCapture();
+      this.stopCursorCapture = null;
     }
   }
 

@@ -1,14 +1,15 @@
 {
   "name": "@monitour/agent",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Monitour remote management agent",
   "author": "Monitour",
   "private": true,
   "type": "module",
-  "main": "./dist/main/electron.js",
+  "main": "./out/main/electron.js",
   "scripts": {
     "dev": "tsc && electron .",
     "dev:cli": "tsx src/main/index.ts",
+    "clean": "node -e \"const fs=require('fs');for(const d of ['out','dist'])fs.rmSync(d,{recursive:true,force:true});fs.rmSync('tsconfig.tsbuildinfo',{force:true})\"",
     "build": "tsc",
     "start": "electron .",
     "dist": "electron-builder",
@@ -17,7 +18,6 @@
   "dependencies": {
     "@monitour/shared": "*",
     "@nut-tree-fork/nut-js": "^4.2.6",
-    "app-builder-bin": "^5.0.0-alpha.10",
     "axios": "^1.8.0",
     "bcryptjs": "^3.0.2",
     "jpeg-js": "^0.4.4",
