@@ -682,6 +682,32 @@ input:focus, select:focus {
   font-size: 16px;
 }
 
+/* Upload progress */
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.progress-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width 0.15s ease-out;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .sidebar { width: 60px; }

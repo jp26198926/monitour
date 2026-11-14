@@ -18,6 +18,8 @@ export interface ServerCerts {
   webKeyPem: string;
   /** SHA-256 hash of agentCertPem (the pin agents trust). */
   agentCertHash: string;
+  /** SHA-256 hash of webCertPem (TLS pin for https deployments). */
+  webCertHash: string;
 }
 
 interface PemPair {
@@ -116,8 +118,10 @@ export function loadOrCreateCerts(dataDir: string): ServerCerts {
       webCertPem: readFileSync(paths.webCert, 'utf-8'),
       webKeyPem: readFileSync(paths.webKey, 'utf-8'),
       agentCertHash: '',
+      webCertHash: '',
     };
     certs.agentCertHash = createHash('sha256').update(certs.agentCertPem).digest('hex');
+    certs.webCertHash = createHash('sha256').update(certs.webCertPem).digest('hex');
     return certs;
   }
 
@@ -154,6 +158,7 @@ export function loadOrCreateCerts(dataDir: string): ServerCerts {
   writeFileSync(paths.webKey, web.keyPem, { mode: 0o600 });
 
   const agentCertHash = createHash('sha256').update(agent.certPem).digest('hex');
+  const webCertHash = createHash('sha256').update(web.certPem).digest('hex');
   log.info('Certificate generation complete. Agent cert hash:', agentCertHash);
 
   return {
@@ -164,6 +169,7 @@ export function loadOrCreateCerts(dataDir: string): ServerCerts {
     webCertPem: web.certPem,
     webKeyPem: web.keyPem,
     agentCertHash,
+    webCertHash,
   };
 }
 

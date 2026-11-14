@@ -205,6 +205,33 @@
       text-decoration: none;
     }
 
+    .settings-tabs {
+      display: flex;
+      gap: 4px;
+      margin: 14px 0 16px;
+      border-bottom: 1px solid #30363d;
+    }
+
+    .settings-tab {
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: #8b949e;
+      padding: 8px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      margin-bottom: -1px;
+    }
+
+    .settings-tab:hover {
+      color: #c9d1d9;
+    }
+
+    .settings-tab.active {
+      color: #58a6ff;
+      border-bottom-color: #58a6ff;
+    }
+
     .spinner {
       display: inline-block;
       width: 14px; height: 14px;
@@ -343,8 +370,8 @@
           <input type="text" id="reEnrollServerUrl" placeholder="http://your-server:4430" required />
         </div>
         <div class="form-group">
-          <label>Enrollment Token</label>
-          <input type="text" id="reEnrollToken" placeholder="Paste new enrollment token" required />
+          <label>Enrollment Key</label>
+          <input type="text" id="reEnrollKey" placeholder="Paste the enrollment key" required />
         </div>
         <button type="submit" class="btn btn-primary" id="reEnrollBtn" style="width:100%">
           Re-Enroll
@@ -355,7 +382,7 @@
     <!-- ENROLLMENT FORM -->
     <div class="card" id="enrollView">
       <h1>Monitour Agent</h1>
-      <p class="subtitle">Enter your server URL and enrollment token to connect this device.</p>
+      <p class="subtitle">Enter your server URL and enrollment key to connect this device.</p>
 
       <div class="error-msg" id="errorBox"></div>
       <div class="success-msg" id="successBox"></div>
@@ -366,8 +393,8 @@
           <input type="text" id="serverUrl" placeholder="http://192.168.1.100:4430" required />
         </div>
         <div class="form-group">
-          <label>Enrollment Token <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional in open mode)</span></label>
-          <input type="text" id="enrollToken" placeholder="Paste token or leave blank for open enrollment" />
+          <label>Enrollment Key</label>
+          <input type="text" id="enrollKey" placeholder="Paste the enrollment key" required />
         </div>
         <button type="submit" class="btn btn-primary" id="submitBtn">
           Connect & Enroll
@@ -394,18 +421,58 @@
         <button class="btn btn-primary btn-sm" id="updateNowBtn">Update Now</button>
       </div>
 
-      <!-- Service status & controls -->
-      <div class="service-section">
+      <div class="footer-links">
+        <a href="#" id="settingsLink">Update Settings</a>
+      </div>
+    </div>
+
+    <!-- SETTINGS VIEW -->
+    <div class="card" id="settingsView" style="display:none">
+      <h1>Agent Settings</h1>
+      <p class="subtitle">Changes require the settings password when one is set.</p>
+
+      <div class="error-msg" id="settingsErrorBox"></div>
+      <div class="success-msg" id="settingsSuccessBox"></div>
+
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="connection">Connection</button>
+        <button class="settings-tab" data-tab="service">Service</button>
+        <button class="settings-tab" data-tab="password">Password</button>
+        <button class="settings-tab" data-tab="app">App</button>
+      </div>
+
+      <!-- Tab: Connection -->
+      <div class="settings-panel" id="tab-connection">
+        <div class="form-group" style="margin-bottom:8px">
+          <label>Server URL</label>
+          <input type="text" id="settingsServerUrl" placeholder="http://your-server:4430" />
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label>Enrollment Key <span style="font-weight:400;text-transform:none;letter-spacing:0">(for the new server)</span></label>
+          <input type="text" id="settingsEnrollKey" placeholder="Leave blank to reuse the current key" />
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label>Device Name</label>
+          <input type="text" id="settingsDeviceName" placeholder="Device name" maxlength="64" />
+        </div>
+        <button class="btn btn-primary btn-sm" id="saveServerUrlBtn" style="width:100%">Save &amp; Re-enroll</button>
+      </div>
+
+      <!-- Tab: Service -->
+      <div class="settings-panel" id="tab-service" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
           <span style="font-size:13px;color:var(--text-secondary)">Service</span>
           <span id="serviceStatusText" style="font-size:13px">Not installed</span>
         </div>
         <button class="btn btn-secondary btn-sm" id="installServiceBtn" style="width:100%">Install as Service (Auto-run)</button>
         <button class="btn btn-danger btn-sm" id="uninstallServiceBtn" style="width:100%;margin-top:6px;display:none">Uninstall Service</button>
+        <div style="margin-top:16px;border-top:1px solid #21262d;padding-top:12px">
+          <button class="btn btn-danger btn-sm" id="quitAgentBtn" style="width:100%">Quit agent</button>
+        </div>
       </div>
 
-      <!-- Settings password -->
-      <div class="password-section">
+      <!-- Tab: Password -->
+      <div class="settings-panel" id="tab-password" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
           <span style="font-size:13px;color:var(--text-secondary)">Settings Password</span>
           <span id="passwordStatusText" style="font-size:13px">Not set</span>
@@ -416,11 +483,30 @@
           </div>
           <button class="btn btn-secondary btn-sm" id="setPasswordBtn" style="width:100%">Set Password</button>
         </div>
-        <button class="btn btn-secondary btn-sm" id="removePasswordBtn" style="width:100%;margin-top:6px;display:none">Remove Password</button>
+        <button class="btn btn-secondary btn-sm" id="changePasswordBtn" style="width:100%;margin-top:6px;display:none">Change Password</button>
+        <button class="btn btn-danger btn-sm" id="removePasswordBtn" style="width:100%;margin-top:6px;display:none">Remove Password</button>
+      </div>
+
+      <!-- Tab: App -->
+      <div class="settings-panel" id="tab-app" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <span style="font-size:13px;color:var(--text-secondary)">Updates</span>
+          <span id="settingsVersion" style="font-size:13px">—</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <label for="showInTrayToggle" style="font-size:13px;margin:0">Show in System Tray</label>
+          <input type="checkbox" id="showInTrayToggle" />
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <label for="autoUpdateToggle" style="font-size:13px;margin:0">Automatic updates</label>
+          <input type="checkbox" id="autoUpdateToggle" />
+        </div>
+        <button class="btn btn-secondary btn-sm" id="checkUpdatesBtn" style="width:100%">Check for Updates</button>
+        <button class="btn btn-primary btn-sm" id="settingsUpdateBtn" style="width:100%;margin-top:6px;display:none">Download &amp; Install</button>
       </div>
 
       <div class="footer-links">
-        <a href="#" id="forgetLink">Reset & re-enroll</a>
+        <a href="#" id="backToStatusLink">Back</a>
       </div>
     </div>
   </div>

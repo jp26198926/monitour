@@ -23,6 +23,7 @@
     "node-forge": "^1.3.1",
     "socket.io": "^4.8.0",
     "uuid": "^11.1.0",
+    "yazl": "^3.3.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -35,6 +36,7 @@
     "@types/node": "^22.0.0",
     "@types/node-forge": "^1.3.11",
     "@types/uuid": "^10.0.0",
+    "@types/yazl": "^3.3.1",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0"
   }

@@ -12,7 +12,7 @@ import { deviceRoutes } from './routes/devices.js';
 import { enrollmentRoutes } from './routes/enrollment.js';
 import { groupRoutes } from './routes/groups.js';
 import { agentUpdateRoutes } from './routes/agentUpdate.js';
-import { settingsRoutes } from './routes/settings.js';
+import { agentPackageRoutes } from './routes/agentPackages.js';
 import { setupSocketHandlers } from './socket/index.js';
 import { createLogger, setLogLevel } from './utils/logger.js';
 
@@ -51,7 +51,7 @@ async function main(): Promise<void> {
   app.use('/api/enrollment', enrollmentRoutes(cfg, certs));
   app.use('/api/groups', groupRoutes(cfg));
   app.use('/api/agent', agentUpdateRoutes(cfg));
-  app.use('/api/settings', settingsRoutes(cfg));
+  app.use('/api/agent', agentPackageRoutes(cfg, certs));
 
   // 404 handler
   app.use((_req, res) => {

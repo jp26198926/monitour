@@ -98,18 +98,19 @@ Open `http://localhost:3000`, click **Create Account** — the first user become
 
 ### Enroll a Device
 
-1. Go to **Settings** → create an **Enrollment Token** (or switch to **Open** mode)
-2. Copy the token
-3. On the target machine, run the agent:
+Easiest: **Settings → Agent Software** → download a pre-configured agent package and run its
+launcher — the agent installs and enrolls automatically.
+
+Manual: **Settings → Enrollment** → create an **Enrollment Key**, then on the target machine:
 
 ```bash
 cd agent
 export MONITOUR_SERVER_URL=http://your-server:4430
-export MONITOUR_ENROLLMENT_TOKEN=<your-token>
+export MONITOUR_ENROLLMENT_KEY=<your-key>
 npm run dev
 ```
 
-Or use the GUI — the agent opens an enrollment window where you can paste the server URL and token.
+Or use the GUI — the agent opens an enrollment window where you can paste the server URL and key.
 
 ### Remote Desktop
 

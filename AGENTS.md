@@ -30,9 +30,9 @@ monitour/
 │   └── src/
 │       ├── index.ts          # Entry point
 │       ├── config.ts         # Zod-validated env config
-│       ├── db/models/        # User, Device, EnrollmentToken (Mongoose)
+│       ├── db/models/        # User, Device, EnrollmentKey, Group (Mongoose)
 │       ├── auth/             # JWT + middleware
-│       ├── routes/           # REST: auth, devices, enrollment
+│       ├── routes/           # REST: auth, devices, enrollment (+keys), groups, settings, agentUpdate, agentPackages
 │       ├── socket/           # Socket.IO: agentHandler, dashboardHandler
 │       └── certs/certOps.ts  # PKI generation + SHA-256 pinning
 ├── dashboard/       # React + Vite web UI
@@ -46,12 +46,17 @@ monitour/
 │       ├── electron.ts       # Electron entry (GUI window)
 │       ├── index.ts          # CLI entry (headless)
 │       ├── connection.ts     # Socket.IO client + command dispatcher
-│       ├── enrollment.ts     # RSA keypair + cert pinning
+│       ├── enrollment.ts     # RSA keypair + enrollment (bootstrap auto-enroll, obfuscated config)
+│       ├── bootstrap.ts      # Discover/consume monitour-bootstrap.json from agent packages
+│       ├── obfuscation.ts    # AES-GCM obfuscation for config at rest (obscurity, not security)
+│       ├── pinning.ts        # Server cert pin checks (enroll response + TLS probe)
+│       ├── updater.ts        # Self-update (check/download/apply + periodic checker)
+│       ├── service.ts        # Service install/uninstall (schtasks / systemd / launchd)
 │       ├── screenCapture.ts  # Screenshot capture
 │       ├── inputInjector.ts  # Mouse/keyboard injection (nut.js)
 │       ├── terminal.ts       # node-pty terminal
 │       ├── fileTransfer.ts   # File ops (path-traversal guarded)
-│       └── src/renderer/     # Electron GUI (enrollment form + status)
+│       └── src/renderer/     # Electron GUI (enroll form, status, settings)
 └── deploy/          # PM2, Nginx, deployment docs
 ```
 
@@ -88,11 +93,14 @@ cd agent && npm run dev        # Electron window opens
 - Thumbnails: **Agent → Server → Dashboard** via `agent:thumbnail` → `device:thumbnail-update`
 - Input: **Dashboard → Server → Agent** via `dash:desktop-input` → `server:desktop-input`
 
-### 3. Device Authentication
+### 3. Device Authentication & Enrollment
 - Agent generates RSA-2048 keypair on first run
-- Enrolls with a one-time token → receives `deviceToken` (JWT) + `serverCertHash`
+- Enrolls with a one-time token, a reusable **enrollment key**, or open mode → receives `deviceToken` (JWT) + `serverCertHash`
 - Server generates cert hierarchy (root CA → agent cert + web cert) on first run
-- Agents pin the server's agent-cert SHA-256 hash
+- Agents pin the server's agent-cert SHA-256 hash (bootstrap carries the expected value)
+- **Auto-enrollment**: dashboard "Add Agent" generates a zip (installer + `monitour-bootstrap.json` + launcher). The agent discovers the bootstrap on first run, enrolls with zero input, then deletes it. Server URL + enrollment material in `config.json` are stored obfuscated (obscurity, not security).
+- Changing the server URL from the agent's Settings wipes the identity, rotates the keypair, and re-enrolls
+- A settings password (bcrypt, enforced in the main process) gates every settings mutation
 
 ### 4. Remote Desktop
 - **View-only by default** — input events are gated behind `controlEnabled` state

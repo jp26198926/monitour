@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { verifyToken, isUserPayload, type UserTokenPayload, type DeviceTokenPayload } from './jwt.js';
+import { verifyToken, isUserPayload, isDevicePayload, type UserTokenPayload, type DeviceTokenPayload } from './jwt.js';
 import type { Config } from '../config.js';
 
 export interface AuthedRequest extends Request {
@@ -39,5 +39,27 @@ export function requireRole(...roles: UserTokenPayload['role'][]) {
       return;
     }
     next();
+  };
+}
+
+/** Authenticates an agent via its device JWT (Bearer). */
+export function requireDeviceAuth(cfg: Config) {
+  return (req: AuthedRequest, res: Response, next: NextFunction): void => {
+    const header = req.headers.authorization;
+    if (!header?.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'Missing or invalid Authorization header' });
+      return;
+    }
+    try {
+      const payload = verifyToken(header.slice(7), cfg);
+      if (!isDevicePayload(payload)) {
+        res.status(403).json({ error: 'Device token required' });
+        return;
+      }
+      req.device = payload;
+      next();
+    } catch {
+      res.status(401).json({ error: 'Invalid or expired token' });
+    }
   };
 }

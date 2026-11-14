@@ -5,9 +5,10 @@ const { ipcRenderer } = require('electron');
 const enrollView = document.getElementById('enrollView');
 const statusView = document.getElementById('statusView');
 const deletedView = document.getElementById('deletedView');
+const settingsView = document.getElementById('settingsView');
 const enrollForm = document.getElementById('enrollForm');
 const serverUrlInput = document.getElementById('serverUrl');
-const enrollTokenInput = document.getElementById('enrollToken');
+const enrollKeyInput = document.getElementById('enrollKey');
 const submitBtn = document.getElementById('submitBtn');
 const errorBox = document.getElementById('errorBox');
 const successBox = document.getElementById('successBox');
@@ -97,8 +98,33 @@ function showPasswordPrompt(message, title) {
   return showModal({ title: title || 'Authentication Required', message, inputType: 'password', okText: 'Verify', showCancel: true, cancelText: 'Cancel' });
 }
 
-function showInputPrompt(message, title, inputType) {
-  return showModal({ title: title || 'Input Required', message, inputType: inputType || 'password', okText: 'Continue', showCancel: true, cancelText: 'Cancel' });
+/**
+ * Ask for the settings password when one is set. Returns null when the user
+ * cancels (the operation must abort) or a string to pass to the main process
+ * (null when no password is set — the main-side gate is inactive then).
+ */
+async function gatePassword(message) {
+  const hasPwd = await ipcRenderer.invoke('is-password-set');
+  if (!hasPwd) return { ok: true, password: null };
+  const pwd = await showPasswordPrompt(message || 'Enter your settings password to continue.');
+  if (pwd === null) return { ok: false };
+  return { ok: true, password: pwd };
+}
+
+function showSettingsError(msg) {
+  const box = document.getElementById('settingsErrorBox');
+  const ok = document.getElementById('settingsSuccessBox');
+  box.textContent = msg;
+  box.style.display = 'block';
+  ok.style.display = 'none';
+}
+
+function showSettingsSuccess(msg) {
+  const box = document.getElementById('settingsSuccessBox');
+  const err = document.getElementById('settingsErrorBox');
+  box.textContent = msg;
+  box.style.display = 'block';
+  err.style.display = 'none';
 }
 
 // ============================================================
@@ -110,10 +136,14 @@ enrollForm.addEventListener('submit', async (e) => {
   hideMessages();
 
   const serverUrl = serverUrlInput.value.trim();
-  const enrollToken = enrollTokenInput.value.trim();
+  const enrollKey = enrollKeyInput.value.trim();
 
   if (!serverUrl) {
     showError('Server URL is required.');
+    return;
+  }
+  if (!enrollKey) {
+    showError('Enrollment key is required.');
     return;
   }
 
@@ -122,11 +152,14 @@ enrollForm.addEventListener('submit', async (e) => {
     url = 'http://' + url;
   }
 
+  const gate = await gatePassword('Enter your settings password to enroll this agent.');
+  if (!gate.ok) return;
+
   submitBtn.disabled = true;
   submitBtn.innerHTML = '<span class="spinner"></span> Enrolling…';
 
   try {
-    const result = await ipcRenderer.invoke('enroll', { serverUrl: url, enrollToken: enrollToken || undefined });
+    const result = await ipcRenderer.invoke('enroll', gate.password, { serverUrl: url, enrollKey: enrollKey || undefined });
     if (result.success) {
       showSuccess('Enrolled successfully! Connecting…');
       setTimeout(() => showStatusView(result.state), 500);
@@ -167,7 +200,6 @@ ipcRenderer.send('app-ready');
 ipcRenderer.on('app-state', (_e, state) => {
   if (state.enrolled) {
     showStatusView(state);
-    initServiceAndPassword();
     initUpdateChecker();
   } else {
     if (state.serverUrl) serverUrlInput.value = state.serverUrl;
@@ -191,9 +223,10 @@ ipcRenderer.on('agent-status', (_e, data) => {
 });
 
 // --- Device deleted from server ---
-ipcRenderer.on('device-deleted', (_e, data) => {
+ipcRenderer.on('device-deleted', (_e) => {
   enrollView.style.display = 'none';
   statusView.style.display = 'none';
+  settingsView.style.display = 'none';
   deletedView.style.display = 'block';
   hideMessages();
 });
@@ -201,7 +234,7 @@ ipcRenderer.on('device-deleted', (_e, data) => {
 // --- Re-enroll form ---
 const reEnrollForm = document.getElementById('reEnrollForm');
 const reEnrollServerUrl = document.getElementById('reEnrollServerUrl');
-const reEnrollToken = document.getElementById('reEnrollToken');
+const reEnrollKeyInput = document.getElementById('reEnrollKey');
 const reEnrollBtn = document.getElementById('reEnrollBtn');
 
 reEnrollForm.addEventListener('submit', async (e) => {
@@ -209,19 +242,22 @@ reEnrollForm.addEventListener('submit', async (e) => {
   hideMessages();
 
   const serverUrl = reEnrollServerUrl.value.trim();
-  const enrollToken = reEnrollToken.value.trim();
-  if (!serverUrl || !enrollToken) return;
+  const enrollKey = reEnrollKeyInput.value.trim();
+  if (!serverUrl || !enrollKey) return;
 
   let url = serverUrl;
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     url = 'http://' + url;
   }
 
+  const gate = await gatePassword('Enter your settings password to re-enroll this agent.');
+  if (!gate.ok) return;
+
   reEnrollBtn.disabled = true;
   reEnrollBtn.innerHTML = '<span class="spinner"></span> Re-enrolling…';
 
   try {
-    const result = await ipcRenderer.invoke('enroll', { serverUrl: url, enrollToken: enrollToken || undefined });
+    const result = await ipcRenderer.invoke('enroll', gate.password, { serverUrl: url, enrollKey });
     if (result.success) {
       showSuccess('Re-enrolled successfully! Connecting…');
       deletedView.style.display = 'none';
@@ -239,6 +275,8 @@ reEnrollForm.addEventListener('submit', async (e) => {
 
 function showStatusView(state) {
   enrollView.style.display = 'none';
+  deletedView.style.display = 'none';
+  settingsView.style.display = 'none';
   statusView.style.display = 'block';
   deviceName.textContent = state.deviceName || 'Unknown Device';
   deviceId.textContent = state.deviceId || '—';
@@ -249,88 +287,195 @@ function showStatusView(state) {
 }
 
 // ============================================================
-// Reset & Re-enroll (password-gated)
+// Settings view
 // ============================================================
 
-document.getElementById('forgetLink').addEventListener('click', async (e) => {
-  e.preventDefault();
+function switchSettingsTab(name) {
+  document.querySelectorAll('.settings-tab').forEach((el) => {
+    el.classList.toggle('active', el.dataset.tab === name);
+  });
+  document.querySelectorAll('.settings-panel').forEach((el) => {
+    el.style.display = el.id === `tab-${name}` ? 'block' : 'none';
+  });
+}
 
+document.querySelectorAll('.settings-tab').forEach((el) => {
+  el.addEventListener('click', () => switchSettingsTab(el.dataset.tab));
+});
+
+document.getElementById('settingsLink').addEventListener('click', async (e) => {
+  e.preventDefault();
+  // The whole settings view is password-protected when a password is set
   const hasPwd = await ipcRenderer.invoke('is-password-set');
   if (hasPwd) {
-    const pwd = await showPasswordPrompt('Enter your settings password to reset and re-enroll this agent.');
+    const pwd = await showPasswordPrompt('Enter your settings password to open settings.');
     if (pwd === null) return;
     const valid = await ipcRenderer.invoke('verify-password', pwd);
     if (!valid) {
-      await showAlert('Incorrect password. Operation cancelled.');
+      await showAlert('Incorrect password.', 'Access Denied');
       return;
     }
-  } else {
-    const ok = await showConfirm('Reset this agent and un-enroll from the server?');
-    if (!ok) return;
+  }
+  statusView.style.display = 'none';
+  settingsView.style.display = 'block';
+  switchSettingsTab('connection');
+  await refreshSettingsView();
+});
+
+document.getElementById('backToStatusLink').addEventListener('click', (e) => {
+  e.preventDefault();
+  settingsView.style.display = 'none';
+  statusView.style.display = 'block';
+});
+
+async function refreshSettingsView() {
+  document.getElementById('settingsErrorBox').style.display = 'none';
+  document.getElementById('settingsSuccessBox').style.display = 'none';
+  try {
+    const s = await ipcRenderer.invoke('get-settings');
+    document.getElementById('settingsServerUrl').value = s.serverUrl || '';
+    document.getElementById('settingsDeviceName').value = s.deviceName || '';
+    document.getElementById('settingsVersion').textContent = s.agentVersion || '—';
+    document.getElementById('autoUpdateToggle').checked = s.autoUpdate !== false;
+    document.getElementById('showInTrayToggle').checked = s.showInTray !== false;
+    document.getElementById('passwordStatusText').textContent = s.passwordSet ? 'Set' : 'Not set';
+    document.getElementById('passwordForm').style.display = s.passwordSet ? 'none' : 'block';
+    document.getElementById('changePasswordBtn').style.display = s.passwordSet ? 'block' : 'none';
+    document.getElementById('removePasswordBtn').style.display = s.passwordSet ? 'block' : 'none';
+
+    renderServiceStatus(s.serviceStatus);
+  } catch { /* ignore */ }
+}
+
+// ============================================================
+// Connection — save settings; re-enrolls only when the server
+// URL or enrollment key changed (name-only changes just save)
+// ============================================================
+
+document.getElementById('saveServerUrlBtn').addEventListener('click', async () => {
+  const raw = document.getElementById('settingsServerUrl').value.trim();
+  if (!raw) {
+    showSettingsError('Server URL is required.');
+    return;
+  }
+  let url = raw;
+  if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'http://' + url;
+
+  const enrollKey = document.getElementById('settingsEnrollKey').value.trim();
+  const newName = document.getElementById('settingsDeviceName').value.trim();
+
+  let current = {};
+  try {
+    current = await ipcRenderer.invoke('get-settings');
+  } catch { /* treat as empty */ }
+  const urlChanged = url !== (current.serverUrl || '');
+  const keyGiven = enrollKey.length > 0;
+  const nameChanged = newName.length > 0 && newName !== (current.deviceName || '');
+
+  if (!urlChanged && !keyGiven && !nameChanged) {
+    showSettingsSuccess('Nothing to save.');
+    return;
   }
 
-  await ipcRenderer.invoke('forget');
-  enrollView.style.display = 'block';
-  statusView.style.display = 'none';
-  serverUrlInput.value = '';
-  enrollTokenInput.value = '';
-  hideMessages();
+  const gate = await gatePassword('Enter your settings password to apply settings changes.');
+  if (!gate.ok) return;
+
+  // Name-only change: save it without touching the device identity
+  if (!urlChanged && !keyGiven) {
+    const result = await ipcRenderer.invoke('update-device-name', gate.password, newName);
+    if (result.success) {
+      showSettingsSuccess('Device name saved.');
+      await refreshSettingsView();
+    } else {
+      showSettingsError(result.error || 'Rename failed.');
+    }
+    return;
+  }
+
+  // Server URL (or a new key) changed → confirm, then full re-enroll
+  const ok = await showConfirm(
+    'Changing the server URL re-registers this device with a NEW identity. ' +
+    'The old server keeps a stale device entry. Continue?',
+    'Save & Re-enroll',
+  );
+  if (!ok) return;
+
+  const btn = document.getElementById('saveServerUrlBtn');
+  btn.disabled = true;
+  btn.textContent = 'Re-enrolling…';
+  try {
+    const result = await ipcRenderer.invoke('change-server-url', gate.password, url, keyGiven ? enrollKey : undefined);
+    if (result.success) {
+      let msg = 'Re-enrolled to ' + url;
+      if (nameChanged) {
+        const rename = await ipcRenderer.invoke('update-device-name', gate.password, newName);
+        msg = rename.success ? `${msg} · device named "${newName}"` : `${msg} (name save failed)`;
+      }
+      showSettingsSuccess(msg);
+      await refreshSettingsView();
+    } else {
+      showSettingsError(result.error || 'Re-enrollment failed.');
+    }
+  } catch (err) {
+    showSettingsError(err.message || 'Unexpected error.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save & Re-enroll';
+  }
 });
 
 // ============================================================
 // Service Management
 // ============================================================
 
-async function initServiceAndPassword() {
-  try {
-    const svc = await ipcRenderer.invoke('service-status');
-    const statusEl = document.getElementById('serviceStatusText');
-    const installBtn = document.getElementById('installServiceBtn');
-    const uninstallBtn = document.getElementById('uninstallServiceBtn');
-    if (svc.installed) {
-      statusEl.textContent = svc.running ? 'Running' : 'Stopped';
-      installBtn.style.display = 'none';
-      uninstallBtn.style.display = 'block';
-    } else {
-      statusEl.textContent = 'Not installed';
-      installBtn.style.display = 'block';
-      uninstallBtn.style.display = 'none';
-    }
-  } catch { /* ignore */ }
-
-  try {
-    const hasPwd = await ipcRenderer.invoke('is-password-set');
-    document.getElementById('passwordStatusText').textContent = hasPwd ? 'Set' : 'Not set';
-    document.getElementById('passwordForm').style.display = hasPwd ? 'none' : 'block';
-    document.getElementById('removePasswordBtn').style.display = hasPwd ? 'block' : 'none';
-  } catch { /* ignore */ }
+function renderServiceStatus(svc) {
+  const statusEl = document.getElementById('serviceStatusText');
+  const installBtn = document.getElementById('installServiceBtn');
+  const uninstallBtn = document.getElementById('uninstallServiceBtn');
+  if (!svc) return;
+  if (svc.installed) {
+    statusEl.textContent = svc.running ? 'Running' : 'Stopped';
+    installBtn.style.display = 'none';
+    uninstallBtn.style.display = 'block';
+  } else {
+    statusEl.textContent = 'Not installed';
+    installBtn.style.display = 'block';
+    uninstallBtn.style.display = 'none';
+  }
 }
 
 document.getElementById('installServiceBtn').addEventListener('click', async () => {
+  const gate = await gatePassword('Enter your settings password to install the service.');
+  if (!gate.ok) return;
+
   const btn = document.getElementById('installServiceBtn');
   btn.disabled = true;
   btn.textContent = 'Installing…';
-  const result = await ipcRenderer.invoke('install-service');
+  const result = await ipcRenderer.invoke('install-service', gate.password);
   btn.disabled = false;
   btn.textContent = 'Install as Service (Auto-run)';
+  renderServiceStatus(result.serviceStatus);
   if (result.success) {
     await showAlert(result.message, 'Service Installed');
   } else {
     await showAlert('Failed: ' + result.message, 'Service Error');
   }
-  await initServiceAndPassword();
+  await refreshSettingsView();
 });
 
 document.getElementById('uninstallServiceBtn').addEventListener('click', async () => {
+  const gate = await gatePassword('Enter your settings password to uninstall the service.');
+  if (!gate.ok) return;
   const ok = await showConfirm('Uninstall the service?');
   if (!ok) return;
-  const result = await ipcRenderer.invoke('uninstall-service');
+  const result = await ipcRenderer.invoke('uninstall-service', gate.password);
+  renderServiceStatus(result.serviceStatus);
   await showAlert(result.message, result.success ? 'Service Uninstalled' : 'Service Error');
-  await initServiceAndPassword();
+  await refreshSettingsView();
 });
 
 // ============================================================
-// Password Management (password-gated for change/remove)
+// Password Management (main process is the real gate)
 // ============================================================
 
 document.getElementById('setPasswordBtn').addEventListener('click', async () => {
@@ -339,30 +484,46 @@ document.getElementById('setPasswordBtn').addEventListener('click', async () => 
     await showAlert('Password must be at least 6 characters.');
     return;
   }
-  const result = await ipcRenderer.invoke('set-password', pwd);
+  // First set needs no password; the main handler enforces that too.
+  const result = await ipcRenderer.invoke('set-password', null, pwd);
   if (result.success) {
     document.getElementById('passwordInput').value = '';
-    await initServiceAndPassword();
+    await refreshSettingsView();
+  } else {
+    await showAlert('Failed: ' + result.error);
+  }
+});
+
+document.getElementById('changePasswordBtn').addEventListener('click', async () => {
+  const oldPwd = await showPasswordPrompt('Enter your current settings password.');
+  if (oldPwd === null) return;
+  const newPwd = await showPasswordPrompt('Enter the new settings password.', 'New Password');
+  if (newPwd === null) return;
+  if (newPwd.length < 6) {
+    await showAlert('Password must be at least 6 characters.');
+    return;
+  }
+  const result = await ipcRenderer.invoke('set-password', oldPwd, newPwd);
+  if (result.success) {
+    await refreshSettingsView();
   } else {
     await showAlert('Failed: ' + result.error);
   }
 });
 
 document.getElementById('removePasswordBtn').addEventListener('click', async () => {
-  // Require old password first
-  const oldPwd = await showPasswordPrompt('Enter your current settings password to remove it.');
-  if (oldPwd === null) return;
-  const valid = await ipcRenderer.invoke('verify-password', oldPwd);
-  if (!valid) {
-    await showAlert('Incorrect password. Operation cancelled.');
-    return;
-  }
+  const gate = await gatePassword('Enter your current settings password to remove it.');
+  if (!gate.ok) return;
 
   const ok = await showConfirm('Remove the settings password?');
   if (!ok) return;
 
-  await ipcRenderer.invoke('remove-password');
-  await initServiceAndPassword();
+  const result = await ipcRenderer.invoke('remove-password', gate.password);
+  if (result.success) {
+    await refreshSettingsView();
+  } else {
+    await showAlert('Failed: ' + result.error);
+  }
 });
 
 // ============================================================
@@ -379,31 +540,121 @@ async function initUpdateChecker() {
   } catch { /* ignore */ }
 }
 
+async function runUpdate(manifest) {
+  const gate = await gatePassword('Enter your settings password to install the update.');
+  if (!gate.ok) return;
+
+  const dl = await ipcRenderer.invoke('download-update', gate.password, manifest);
+  if (!dl.success) {
+    await showAlert('Download failed: ' + dl.error);
+    return;
+  }
+  await ipcRenderer.invoke('apply-update', gate.password, dl.filepath);
+  await showAlert('Update applied. The agent will restart.');
+}
+
 document.getElementById('updateNowBtn').addEventListener('click', async () => {
   const btn = document.getElementById('updateNowBtn');
   btn.disabled = true;
   btn.textContent = 'Downloading…';
-
   try {
     const check = await ipcRenderer.invoke('check-for-updates');
     if (!check.manifest) {
       await showAlert('No update available.');
       return;
     }
-
-    const dl = await ipcRenderer.invoke('download-update', check.manifest);
-    if (!dl.success) {
-      await showAlert('Download failed: ' + dl.error);
-      return;
-    }
-
-    btn.textContent = 'Installing…';
-    await ipcRenderer.invoke('apply-update', dl.filepath);
-    await showAlert('Update applied. The agent will restart.');
+    await runUpdate(check.manifest);
   } catch (err) {
     await showAlert('Update failed: ' + (err.message || err));
   } finally {
     btn.disabled = false;
     btn.textContent = 'Update Now';
+  }
+});
+
+document.getElementById('checkUpdatesBtn').addEventListener('click', async () => {
+  const result = await ipcRenderer.invoke('check-for-updates');
+  const btn = document.getElementById('settingsUpdateBtn');
+  if (result.hasUpdate && result.manifest) {
+    btn.style.display = 'block';
+    btn.dataset.version = result.manifest.version;
+    showSettingsSuccess('Update available: ' + result.manifest.version);
+  } else {
+    btn.style.display = 'none';
+    showSettingsSuccess('Agent is up to date.');
+  }
+});
+
+document.getElementById('settingsUpdateBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('settingsUpdateBtn');
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+  try {
+    const check = await ipcRenderer.invoke('check-for-updates');
+    if (!check.manifest) {
+      showSettingsError('No update available.');
+      return;
+    }
+    await runUpdate(check.manifest);
+  } catch (err) {
+    showSettingsError(err.message || 'Update failed.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Download & Install';
+  }
+});
+
+document.getElementById('autoUpdateToggle').addEventListener('change', async (e) => {
+  const enabled = e.target.checked;
+  const gate = await gatePassword('Enter your settings password to change update settings.');
+  if (!gate.ok) {
+    e.target.checked = !enabled;
+    return;
+  }
+  const result = await ipcRenderer.invoke('set-auto-update', gate.password, enabled);
+  if (!result.success) {
+    e.target.checked = !enabled;
+    showSettingsError(result.error || 'Failed to change update setting.');
+  } else {
+    showSettingsSuccess('Update preference saved.');
+  }
+});
+
+document.getElementById('showInTrayToggle').addEventListener('change', async (e) => {
+  const enabled = e.target.checked;
+  const gate = await gatePassword('Enter your settings password to change the tray setting.');
+  if (!gate.ok) {
+    e.target.checked = !enabled;
+    return;
+  }
+  const result = await ipcRenderer.invoke('set-show-in-tray', gate.password, enabled);
+  if (!result || !result.success) {
+    e.target.checked = !enabled;
+    showSettingsError((result && result.error) || 'Failed to change tray setting.');
+  } else {
+    showSettingsSuccess(enabled ? 'Tray icon shown.' : 'Tray icon hidden.');
+  }
+});
+
+// ============================================================
+// Quit agent (password-gated when a password is set)
+// ============================================================
+
+document.getElementById('quitAgentBtn').addEventListener('click', async () => {
+  const gate = await gatePassword('Enter your settings password to quit the agent.');
+  if (!gate.ok) return;
+  const result = await ipcRenderer.invoke('quit-app', gate.password);
+  if (!result || !result.success) {
+    await showAlert((result && result.error) || 'Quit failed', 'Quit');
+  }
+});
+
+// Tray menu → Quit with a password set: main surfaces this prompt
+ipcRenderer.on('prompt-quit-password', async () => {
+  const pwd = await showPasswordPrompt('Enter your settings password to quit the agent.');
+  if (pwd === null) return; // cancel — the agent keeps running
+  const result = await ipcRenderer.invoke('quit-app', pwd);
+  if (!result || !result.success) {
+    await showAlert((result && result.error) || 'Quit failed', 'Quit');
   }
 });

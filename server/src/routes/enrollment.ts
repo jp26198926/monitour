@@ -1,23 +1,25 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { Device, EnrollmentToken } from '../db/index.js';
+import { Device, EnrollmentKey } from '../db/index.js';
 import { requireAuth, requireRole, type AuthedRequest } from '../auth/middleware.js';
 import { signDeviceToken } from '../auth/jwt.js';
 import { publicKeyFingerprint } from '../certs/certOps.js';
 import type { Config } from '../config.js';
 import type { ServerCerts } from '../certs/certOps.js';
-import { getEnrollmentMode } from './settings.js';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('enrollment');
 
-const createTokenSchema = z.object({
-  label: z.string().max(64).optional(),
-  expiresInHours: z.number().int().positive().max(24 * 90).default(24),
+const createKeySchema = z.object({
+  name: z.string().min(1).max(64),
+  group: z.string().max(64).nullable().optional(),
+  labels: z.array(z.string().max(64)).max(32).optional(),
+  maxUses: z.number().int().positive().nullable().optional(),
+  expiresInDays: z.number().int().positive().max(3650).nullable().optional(),
 });
 
 const enrollSchema = z.object({
-  enrollmentToken: z.string().min(10).optional(),
+  enrollmentKey: z.string().min(10),
   hostname: z.string().min(1).max(128),
   platform: z.string().min(1).max(32),
   arch: z.string().min(1).max(32),
@@ -28,70 +30,95 @@ const enrollSchema = z.object({
 export function enrollmentRoutes(cfg: Config, certs: ServerCerts): Router {
   const router = Router();
 
-  // POST /api/enrollment/tokens — admin creates a one-time enrollment token
-  router.post('/tokens', requireAuth(cfg), requireRole('admin'), async (req: AuthedRequest, res) => {
-    const parsed = createTokenSchema.safeParse(req.body ?? {});
+  // ---- Reusable enrollment keys (embedded in server-generated agent packages) ----
+
+  // POST /api/enrollment/keys — create a reusable enrollment key
+  router.post('/keys', requireAuth(cfg), requireRole('admin'), async (req: AuthedRequest, res) => {
+    const parsed = createKeySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
       return;
     }
-    const { label, expiresInHours } = parsed.data;
-    const expiresAt = new Date(Date.now() + expiresInHours * 3600_000);
+    const { name, group, labels, maxUses, expiresInDays } = parsed.data;
+    const expiresAt = expiresInDays ? new Date(Date.now() + expiresInDays * 86_400_000) : null;
 
-    const token = await EnrollmentToken.create({
-      label: label ?? `token-${Date.now()}`,
-      createdBy: req.user!.sub,
+    const keyDoc = await EnrollmentKey.create({
+      name,
+      group: group ?? null,
+      labels: labels ?? [],
+      maxUses: maxUses ?? null,
       expiresAt,
+      createdBy: req.user!.sub,
     });
 
-    log.info(`Enrollment token created by ${req.user!.username}: ${token.token.slice(0, 8)}…`);
+    log.info(`Enrollment key created by ${req.user!.username}: ${keyDoc.name} (${keyDoc.key.slice(0, 8)}…)`);
     res.status(201).json({
-      token: token.token,
-      label: token.label,
-      expiresAt: token.expiresAt.toISOString(),
-      used: false,
+      id: keyDoc._id.toString(),
+      name: keyDoc.name,
+      key: keyDoc.key, // full secret — shown once
+      group: keyDoc.group,
+      labels: keyDoc.labels,
+      maxUses: keyDoc.maxUses,
+      useCount: keyDoc.useCount,
+      expiresAt: keyDoc.expiresAt?.toISOString() ?? null,
+      revokedAt: null,
+      createdAt: keyDoc.createdAt.toISOString(),
     });
   });
 
-  // GET /api/enrollment/tokens — list tokens
-  router.get('/tokens', requireAuth(cfg), requireRole('admin'), async (_req, res) => {
-    const tokens = await EnrollmentToken.find().sort({ createdAt: -1 }).limit(100).lean();
+  // GET /api/enrollment/keys — list keys (secret masked)
+  router.get('/keys', requireAuth(cfg), requireRole('admin'), async (_req, res) => {
+    const keys = await EnrollmentKey.find().sort({ createdAt: -1 }).limit(100).lean();
     res.json({
-      tokens: tokens.map((t) => ({
-        token: t.token.slice(0, 8) + '…',
-        fullToken: t.token,
-        label: t.label,
-        expiresAt: t.expiresAt.toISOString(),
-        used: t.usedAt !== null,
+      keys: keys.map((k) => ({
+        id: k._id.toString(),
+        name: k.name,
+        key: k.key.slice(0, 8) + '…',
+        group: k.group,
+        labels: k.labels,
+        maxUses: k.maxUses,
+        useCount: k.useCount,
+        expiresAt: k.expiresAt ? k.expiresAt.toISOString() : null,
+        revokedAt: k.revokedAt ? k.revokedAt.toISOString() : null,
+        createdAt: k.createdAt.toISOString(),
       })),
     });
   });
 
-  // POST /api/enrollment/enroll — agent exchanges enrollment token for device credentials
+  // POST /api/enrollment/keys/:id/revoke — block future enrolls with this key
+  router.post('/keys/:id/revoke', requireAuth(cfg), requireRole('admin'), async (req, res) => {
+    const keyDoc = await EnrollmentKey.findById(req.params.id);
+    if (!keyDoc) {
+      res.status(404).json({ error: 'Enrollment key not found' });
+      return;
+    }
+    if (keyDoc.revokedAt === null) {
+      keyDoc.revokedAt = new Date();
+      await keyDoc.save();
+    }
+    log.info(`Enrollment key revoked: ${keyDoc.name} (${keyDoc.key.slice(0, 8)}…)`);
+    res.json({ ok: true });
+  });
+
+  // POST /api/enrollment/enroll — agent exchanges an enrollment key for device credentials
   router.post('/enroll', async (req, res) => {
     const parsed = enrollSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
       return;
     }
-    const { enrollmentToken, hostname, platform, arch, agentVersion, publicKeyPem } = parsed.data;
+    const { enrollmentKey, hostname, platform, arch, agentVersion, publicKeyPem } = parsed.data;
 
-    // Check enrollment mode
-    const mode = await getEnrollmentMode();
-    let tokenDoc = null;
-    if (mode === 'locked') {
-      // Token is required
-      if (!enrollmentToken) {
-        res.status(401).json({ error: 'Enrollment token is required' });
-        return;
-      }
-      tokenDoc = await EnrollmentToken.findOne({ token: enrollmentToken });
-      if (!tokenDoc || !tokenDoc.isValid()) {
-        res.status(401).json({ error: 'Invalid or expired enrollment token' });
-        return;
-      }
+    // Enrollment keys are the only credential — always required
+    const keyDoc = await EnrollmentKey.findOne({ key: enrollmentKey });
+    if (!keyDoc) {
+      res.status(401).json({ error: 'Valid enrollment key is required' });
+      return;
     }
-    // If mode === 'open', no token needed
+    if (!keyDoc.isValid()) {
+      res.status(401).json({ error: 'Invalid, expired or revoked enrollment key' });
+      return;
+    }
 
     // Compute fingerprint of agent's public key
     let fingerprint: string;
@@ -121,13 +148,12 @@ export function enrollmentRoutes(cfg: Config, certs: ServerCerts): Router {
       publicKeyPem,
       publicKeyFingerprint: fingerprint,
       status: 'pending',
+      group: keyDoc.group,
+      labels: keyDoc.labels,
+      enrollmentKeyId: keyDoc._id,
     });
 
-    if (tokenDoc) {
-      tokenDoc.usedAt = new Date();
-      tokenDoc.usedByDevice = device._id;
-      await tokenDoc.save();
-    }
+    await EnrollmentKey.updateOne({ _id: keyDoc._id }, { $inc: { useCount: 1 } });
 
     const deviceToken = signDeviceToken(
       {

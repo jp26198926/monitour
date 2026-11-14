@@ -22,6 +22,5 @@ export async function disconnectDatabase(): Promise<void> {
 
 export { User } from './models/User.js';
 export { Device } from './models/Device.js';
-export { EnrollmentToken } from './models/EnrollmentToken.js';
+export { EnrollmentKey } from './models/EnrollmentKey.js';
 export { Group } from './models/Group.js';
-export { ServerSettings } from './models/ServerSettings.js';

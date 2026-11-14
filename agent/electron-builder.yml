@@ -64,6 +64,7 @@ nsis:
   perMachine: true
   allowToChangeInstallationDirectory: false
   runAfterFinish: true
+  createDesktopShortcut: false
 
 dmg:
   contents:

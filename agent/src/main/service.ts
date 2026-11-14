@@ -1,6 +1,5 @@
-import { platform } from 'node:os';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { platform, homedir, tmpdir } from 'node:os';
+import { join, basename } from 'node:path';
 import { execSync } from 'node:child_process';
 import { writeFileSync, existsSync, rmSync } from 'node:fs';
 
@@ -13,9 +12,40 @@ export interface ServiceStatus {
   platform: NodeJS.Platform;
 }
 
-function getAgentScriptPath(): string {
-  // The headless CLI entry point — this is what runs as a service
-  return join(process.cwd(), 'dist', 'main', 'index.js');
+export interface ServiceActionResult {
+  success: boolean;
+  message: string;
+  /** Fresh status after the action — drives the UI directly. */
+  serviceStatus: ServiceStatus;
+}
+
+/**
+ * Argv the service should run.
+ *  - Packaged Electron app: the installed binary itself, headless.
+ *  - Dev Electron: the Electron binary + the agent directory.
+ *  - Plain node (CLI): node + the compiled CLI entry next to this module.
+ */
+function getServiceArgv(): string[] {
+  if (process.versions.electron) {
+    const exe = process.execPath;
+    if (/electron/i.test(basename(exe))) {
+      // Dev: execPath is the Electron binary and needs the app directory
+      return [exe, join(import.meta.dirname, '..', '..'), '--service', '--hidden'];
+    }
+    return [exe, '--service', '--hidden'];
+  }
+  return [process.execPath, join(import.meta.dirname, 'index.js')];
+}
+
+/** Shell-quoted command line (schtasks /tr, systemd ExecStart). */
+function getServiceCommand(): string {
+  return getServiceArgv()
+    .map((a) => (a.includes(' ') ? `"${a}"` : a))
+    .join(' ');
+}
+
+function getServiceWorkDir(): string {
+  return process.versions.electron ? join(import.meta.dirname, '..', '..') : import.meta.dirname;
 }
 
 function getConfigDir(): string {
@@ -24,46 +54,80 @@ function getConfigDir(): string {
 
 /**
  * Install the agent as a system service (auto-start on boot).
+ * Success is determined by verifying the service actually exists afterwards.
  */
-export async function installService(): Promise<{ success: boolean; message: string }> {
+export async function installService(): Promise<ServiceActionResult> {
   const plat = platform();
 
+  let result: { success: boolean; message: string };
   try {
     switch (plat) {
       case 'win32':
-        return await installWindowsService();
+        result = installWindowsTask();
+        break;
       case 'linux':
-        return await installLinuxService();
+        result = await installLinuxService();
+        break;
       case 'darwin':
-        return await installMacService();
+        result = await installMacService();
+        break;
       default:
-        return { success: false, message: `Unsupported platform: ${plat}` };
+        result = { success: false, message: `Unsupported platform: ${plat}` };
     }
   } catch (err) {
-    return { success: false, message: err instanceof Error ? err.message : String(err) };
+    result = { success: false, message: err instanceof Error ? err.message : String(err) };
   }
+
+  // Trust the actual state, not the command's exit code alone
+  const serviceStatus = getServiceStatus();
+  const success = result.success && serviceStatus.installed;
+  return {
+    success,
+    message: success
+      ? result.message
+      : result.success
+        ? 'Install command ran but the service is not present'
+        : result.message,
+    serviceStatus,
+  };
 }
 
 /**
- * Uninstall the system service.
+ * Uninstall the system service. Success = the service is actually gone.
  */
-export async function uninstallService(): Promise<{ success: boolean; message: string }> {
+export async function uninstallService(): Promise<ServiceActionResult> {
   const plat = platform();
 
+  let result: { success: boolean; message: string };
   try {
     switch (plat) {
       case 'win32':
-        return await uninstallWindowsService();
+        result = uninstallWindowsTask();
+        break;
       case 'linux':
-        return await uninstallLinuxService();
+        result = await uninstallLinuxService();
+        break;
       case 'darwin':
-        return await uninstallMacService();
+        result = await uninstallMacService();
+        break;
       default:
-        return { success: false, message: `Unsupported platform: ${plat}` };
+        result = { success: false, message: `Unsupported platform: ${plat}` };
     }
   } catch (err) {
-    return { success: false, message: err instanceof Error ? err.message : String(err) };
+    result = { success: false, message: err instanceof Error ? err.message : String(err) };
   }
+
+  const serviceStatus = getServiceStatus();
+  const success = result.success && !serviceStatus.installed;
+  return {
+    success,
+    message: success
+      ? result.message
+      : result.success
+        ? 'Uninstall command ran but the service is still present'
+        : result.message,
+    serviceStatus,
+  };
 }
 
 /**
@@ -88,98 +152,65 @@ export function getServiceStatus(): ServiceStatus {
   }
 }
 
-// ---- Windows (node-windows) ----
-
-async function installWindowsService(): Promise<{ success: boolean; message: string }> {
-  try {
-    const { Service } = (await import('node-windows' as string)) as {
-      Service: new (opts: Record<string, unknown>) => NodeJS.EventEmitter;
-    };
-    const svc = new Service({
-      name: SERVICE_NAME,
-      description: 'Monitour remote management agent',
-      script: getAgentScriptPath(),
-      nodeOptions: ['--max-old-space-size=256'],
-      env: [{ name: 'NODE_ENV', value: 'production' }],
-      workingDirectory: process.cwd(),
-    });
-
-    return new Promise((resolve) => {
-      svc.on('install', () => {
-        (svc as unknown as { start: () => void }).start();
-        resolve({ success: true, message: 'Service installed and started' });
-      });
-      svc.on('error', (err: unknown) => {
-        resolve({ success: false, message: `Service error: ${String(err)}` });
-      });
-      (svc as unknown as { install: () => void }).install();
-    });
-  } catch {
-    // Fallback: create a Windows Task Scheduler task for auto-start (elevated)
-    return installWindowsTask();
-  }
-}
-
-async function uninstallWindowsService(): Promise<{ success: boolean; message: string }> {
-  try {
-    const { Service } = (await import('node-windows' as string)) as {
-      Service: new (opts: Record<string, unknown>) => NodeJS.EventEmitter;
-    };
-    const svc = new Service({
-      name: SERVICE_NAME,
-      script: getAgentScriptPath(),
-    });
-
-    return new Promise((resolve) => {
-      svc.on('uninstall', () => {
-        resolve({ success: true, message: 'Service uninstalled' });
-      });
-      svc.on('error', (err: unknown) => {
-        resolve({ success: false, message: `Service error: ${String(err)}` });
-      });
-      (svc as unknown as { uninstall: () => void }).uninstall();
-    });
-  } catch {
-    return uninstallWindowsTask();
-  }
-}
+// ---- Windows (Task Scheduler, runs elevated) ----
 
 function checkWindowsService(): ServiceStatus {
   try {
-    const result = execSync(`sc query "${SERVICE_NAME}"`, { encoding: 'utf-8', stdio: 'pipe' });
-    const installed = result.includes('SERVICE_NAME');
-    const running = result.includes('RUNNING');
-    return { installed, running, platform: 'win32' };
+    // Existence by exit code — locale-proof (output text is localized on non-English Windows)
+    execSync(`schtasks /query /tn "${SERVICE_NAME}"`, { encoding: 'utf-8', stdio: 'pipe' });
+    let running = false;
+    try {
+      const detail = execSync(`schtasks /query /tn "${SERVICE_NAME}" /v /fo LIST`, {
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      });
+      running = /Status:\s+Running/i.test(detail);
+    } catch {
+      // verbose query is best-effort — installed state is already known
+    }
+    return { installed: true, running, platform: 'win32' };
   } catch {
     return { installed: false, running: false, platform: 'win32' };
   }
 }
 
-// Windows Task Scheduler fallback (runs elevated)
-function installWindowsTask(): { success: boolean; message: string } {
+/**
+ * Run a batch file elevated and propagate its real exit code.
+ * (Start-Process alone always "succeeds" — without -PassThru + exit $p.ExitCode
+ * a failed schtasks would be reported as success.)
+ */
+function runElevatedBatch(lines: string[]): void {
+  const batPath = join(tmpdir(), `monitour-svc-${Date.now()}-${process.pid}.bat`);
+  writeFileSync(batPath, lines.join('\r\n') + '\r\n', { mode: 0o600 });
   try {
-    const script = getAgentScriptPath();
-    const cmd = `schtasks /create /tn "${SERVICE_NAME}" /tr "node ${script}" /sc onstart /ru SYSTEM /f`;
     execSync(
-      `powershell -Command "Start-Process cmd -ArgumentList '/c ${cmd}' -Verb RunAs -Wait"`,
+      `powershell -NoProfile -Command "$p = Start-Process -FilePath '${batPath}' -Verb RunAs -Wait -PassThru; exit $p.ExitCode"`,
       { encoding: 'utf-8', stdio: 'pipe' },
     );
+  } finally {
+    rmSync(batPath, { force: true });
+  }
+}
+
+function installWindowsTask(): { success: boolean; message: string } {
+  try {
+    // schtasks /tr needs embedded quotes escaped as \" inside the .bat line
+    const command = getServiceCommand().replace(/"/g, '\\"');
+    runElevatedBatch([
+      `schtasks /create /tn "${SERVICE_NAME}" /tr "${command}" /sc onstart /ru SYSTEM /rl highest /f`,
+    ]);
     return { success: true, message: 'Auto-start task created (Task Scheduler)' };
   } catch (err) {
-    return { success: false, message: `Failed to create task: ${err}` };
+    return { success: false, message: `Failed to create task: ${err instanceof Error ? err.message : err}` };
   }
 }
 
 function uninstallWindowsTask(): { success: boolean; message: string } {
   try {
-    const cmd = `schtasks /delete /tn "${SERVICE_NAME}" /f`;
-    execSync(
-      `powershell -Command "Start-Process cmd -ArgumentList '/c ${cmd}' -Verb RunAs -Wait"`,
-      { encoding: 'utf-8', stdio: 'pipe' },
-    );
+    runElevatedBatch([`schtasks /delete /tn "${SERVICE_NAME}" /f`]);
     return { success: true, message: 'Auto-start task removed' };
   } catch (err) {
-    return { success: false, message: `Failed to remove task: ${err}` };
+    return { success: false, message: `Failed to remove task: ${err instanceof Error ? err.message : err}` };
   }
 }
 
@@ -193,11 +224,11 @@ After=network.target
 [Service]
 Type=simple
 User=${process.env.USER || 'root'}
-ExecStart=$(which node) ${getAgentScriptPath()}
+ExecStart=${getServiceCommand()}
 Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
-WorkingDirectory=${process.cwd()}
+WorkingDirectory=${getServiceWorkDir()}
 
 [Install]
 WantedBy=multi-user.target
@@ -239,6 +270,9 @@ function checkLinuxService(): ServiceStatus {
 // ---- macOS (launchd) ----
 
 async function installMacService(): Promise<{ success: boolean; message: string }> {
+  const programArgs = getServiceArgv()
+    .map((a) => `    <string>${a}</string>`)
+    .join('\n');
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -247,15 +281,14 @@ async function installMacService(): Promise<{ success: boolean; message: string 
   <string>${SERVICE_ID}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${execSync('which node', { encoding: 'utf-8' }).trim()}</string>
-    <string>${getAgentScriptPath()}</string>
+${programArgs}
   </array>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>WorkingDirectory</key>
-  <string>${process.cwd()}</string>
+  <string>${getServiceWorkDir()}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>NODE_ENV</key>
@@ -299,7 +332,7 @@ function checkMacService(): ServiceStatus {
 const LOCK_TASK_NAME = 'MonitourLockCapture';
 
 function getLockHelperScriptPath(): string {
-  return join(process.cwd(), 'dist', 'main', 'lockCaptureHelper.js');
+  return join(import.meta.dirname, 'lockCaptureHelper.js');
 }
 
 export function ensureLockCaptureTask(): { success: boolean; message: string } {

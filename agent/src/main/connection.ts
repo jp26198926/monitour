@@ -46,6 +46,8 @@ export class AgentConnection {
   public deviceDeleted = false;
   public onDeviceDeleted?: () => void;
   public onStatusChange?: (connected: boolean) => void;
+  /** Server announced a new agent update — run one check pass. */
+  public onServerUpdateAvailable?: () => void;
 
   constructor(credentials: DeviceCredentials) {
     this.credentials = credentials;
@@ -109,6 +111,11 @@ export class AgentConnection {
       this.deviceDeleted = true;
       this.socket?.disconnect();
       this.onDeviceDeleted?.();
+    });
+
+    // ---- Server announces an agent update ----
+    this.socket.on(ServerEvent.UpdateAvailable, () => {
+      this.onServerUpdateAvailable?.();
     });
 
     // ---- Server tells us to end a session ----
@@ -206,7 +213,7 @@ export class AgentConnection {
     }
   }
 
-  private emitUpdateProgress(progress: { stage: string; message: string; version?: string }): void {
+  emitUpdateProgress(progress: { stage: string; message: string; version?: string }): void {
     if (this.socket?.connected) {
       this.socket.emit(AgentEvent.UpdateResult, {
         deviceId: this.credentials.deviceId,

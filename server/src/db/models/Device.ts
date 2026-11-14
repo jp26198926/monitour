@@ -43,6 +43,8 @@ const deviceSchema = new Schema(
     group: { type: String, default: null, index: true },
     /** User-defined alias name. */
     alias: { type: String, default: '', maxlength: 64 },
+    /** Reusable enrollment key that registered this device (audit trail). */
+    enrollmentKeyId: { type: Schema.Types.ObjectId, ref: 'EnrollmentKey', default: null },
 
     // --- Live stats ---
     systemInfo: { type: systemInfoSchema, default: null },

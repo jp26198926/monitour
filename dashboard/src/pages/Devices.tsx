@@ -284,7 +284,8 @@ export function DevicesPage() {
             </p>
             {devices.length === 0 && (
               <p style={{ fontSize: 13 }}>
-                Go to <strong>Settings</strong> to create an enrollment token, then run the agent on a device.
+                Go to <strong>Settings → Agent Software</strong> to download a pre-configured agent
+                package, or create an enrollment key and run the agent manually.
               </p>
             )}
           </div>

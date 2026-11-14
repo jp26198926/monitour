@@ -8,6 +8,8 @@ coverage/
 .env
 .env.local
 server/data/
+!server/updates/manifest.json
+server/updates/
 agent/out/
 agent/dist/
 dashboard/dist/

@@ -53,7 +53,7 @@ export async function checkForUpdates(serverUrl: string): Promise<UpdateManifest
  * Download the update package to the local updates directory.
  */
 export async function downloadUpdate(serverUrl: string, manifest: UpdateManifest): Promise<string> {
-  const filename = basename(new URL(manifest.downloadUrl).pathname) || `monitour-agent-${manifest.version}`;
+  const filename = basename(new URL(manifest.downloadUrl, serverUrl).pathname) || `monitour-agent-${manifest.version}`;
   const filepath = join(getUpdateDir(), filename);
 
   console.log(`Downloading update ${manifest.version} from ${manifest.downloadUrl}`);
@@ -68,6 +68,25 @@ export async function downloadUpdate(serverUrl: string, manifest: UpdateManifest
     rmSync(filepath, { force: true }); // never leave a truncated installer behind (applyUpdate executes it)
     throw err;
   }
+
+  // Verify integrity when the server published a checksum
+  if (manifest.sha256) {
+    const { createHash } = await import('node:crypto');
+    const { createReadStream } = await import('node:fs');
+    const actual = await new Promise<string>((resolve, reject) => {
+      const hash = createHash('sha256');
+      createReadStream(filepath)
+        .on('data', (chunk) => hash.update(chunk))
+        .on('end', () => resolve(hash.digest('hex')))
+        .on('error', reject);
+    });
+    if (actual !== manifest.sha256) {
+      rmSync(filepath, { force: true });
+      throw new Error(`Update checksum mismatch (expected ${manifest.sha256.slice(0, 12)}…, got ${actual.slice(0, 12)}…)`);
+    }
+    console.log('Update checksum verified');
+  }
+
   console.log(`Update downloaded: ${filepath}`);
   return filepath;
 }
@@ -123,13 +142,37 @@ export function applyUpdate(filepath: string): void {
 
 /**
  * Start periodic update checks.
- * Returns a stop function.
+ * With autoUpdate the download+install runs automatically; otherwise the
+ * caller is only notified (GUI banner / manual button).
  */
-export function startUpdateChecker(serverUrl: string, onUpdateAvailable?: (manifest: UpdateManifest) => void): () => void {
-  async function runCheck() {
+export interface UpdateCheckerOptions {
+  autoUpdate: boolean;
+  onUpdateAvailable?: (manifest: UpdateManifest) => void;
+  onProgress?: (progress: { stage: string; message: string; version?: string }) => void;
+}
+
+export function startUpdateChecker(
+  serverUrl: string,
+  opts: UpdateCheckerOptions,
+): { stop: () => void; checkNow: () => Promise<void> } {
+  async function runCheck(): Promise<void> {
     const manifest = await checkForUpdates(serverUrl);
-    if (manifest) {
-      onUpdateAvailable?.(manifest);
+    if (!manifest) return;
+    opts.onUpdateAvailable?.(manifest);
+    if (!opts.autoUpdate) return;
+
+    opts.onProgress?.({ stage: 'downloading', message: `Downloading ${manifest.version}`, version: manifest.version });
+    try {
+      const filepath = await downloadUpdate(serverUrl, manifest);
+      opts.onProgress?.({ stage: 'installing', message: `Installing ${manifest.version}`, version: manifest.version });
+      applyUpdate(filepath);
+      opts.onProgress?.({ stage: 'done', message: `Update ${manifest.version} applied`, version: manifest.version });
+    } catch (err) {
+      opts.onProgress?.({
+        stage: 'error',
+        message: err instanceof Error ? err.message : String(err),
+        version: manifest.version,
+      });
     }
   }
 
@@ -139,5 +182,5 @@ export function startUpdateChecker(serverUrl: string, onUpdateAvailable?: (manif
   // Check periodically
   const timer = setInterval(() => void runCheck(), UPDATE_CHECK_INTERVAL);
 
-  return () => clearInterval(timer);
+  return { stop: () => clearInterval(timer), checkNow: runCheck };
 }

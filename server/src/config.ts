@@ -13,6 +13,8 @@ const envSchema = z.object({
   DATA_DIR: z.string().default('./data'),
   /** Allowed origins for the dashboard (CORS). Comma-separated. */
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  /** Externally reachable server URL used in generated agent packages. Falls back to the request Host header. */
+  PUBLIC_URL: z.string().default(''),
   /** Log level */
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   /** Max agent-update upload size in bytes. */

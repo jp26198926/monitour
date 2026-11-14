@@ -82,12 +82,28 @@ export interface UpdateManifest {
   downloadUrl: string;
   notes: string;
   publishedAt: string;
+  /** Hex SHA-256 of the update file, verified by the agent before install. */
+  sha256?: string;
 }
 
 export interface UpdateCheckResult {
   hasUpdate: boolean;
   currentVersion: string;
   manifest: UpdateManifest | null;
+}
+
+// POST /api/agent/updates/publish — publish a slot installer as the update for its platform-arch
+export interface PublishUpdateRequest {
+  platform: 'win32' | 'darwin' | 'linux';
+  arch: 'x64' | 'arm64';
+  version: string;
+  notes?: string;
+}
+
+// GET /api/agent/updates — manifests keyed '<platform>-<arch>'
+export interface PublishedUpdatesResponse {
+  manifests: Record<string, UpdateManifest>;
+  files: InstallerInfo[];
 }
 
 export interface UpdateProgress {
@@ -117,24 +133,34 @@ export interface RegisterRequest {
   displayName?: string;
 }
 
-// POST /api/enrollment/tokens  (admin creates one-time token)
-export interface CreateEnrollmentTokenRequest {
-  label?: string;
-  expiresInHours?: number; // default 24
+// POST /api/enrollment/keys  (admin creates a reusable enrollment key)
+export interface CreateEnrollmentKeyRequest {
+  name: string;
+  group?: string | null;
+  labels?: string[];
+  /** null = unlimited */
+  maxUses?: number | null;
+  expiresInDays?: number | null;
 }
-export interface EnrollmentTokenInfo {
-  token: string;
-  label: string;
-  expiresAt: string;
-  used: boolean;
+export interface EnrollmentKeyInfo {
+  id: string;
+  name: string;
+  /** Full secret in the create response only; masked in list responses. */
+  key: string;
+  group: string | null;
+  labels: string[];
+  maxUses: number | null;
+  useCount: number;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
 }
-
-export type EnrollmentMode = 'open' | 'locked';
 
 // Agent enrollment exchange
 // POST /api/enrollment/enroll
 export interface AgentEnrollRequest {
-  enrollmentToken: string;
+  /** Required — the only enrollment credential (reusable key; maxUses:1 = one-time). */
+  enrollmentKey: string;
   hostname: string;
   platform: string;
   arch: string;
@@ -150,6 +176,67 @@ export interface AgentEnrollResponse {
   serverCertHash: string;
   /** Socket.IO URL the agent should connect to. */
   serverUrl: string;
+}
+
+// Bootstrap file (monitour-bootstrap.json) shipped inside a server-generated
+// agent package. Consumed on first run, then deleted.
+export interface AgentBootstrap {
+  v: 1;
+  serverUrl: string;
+  enrollmentKey: string;
+  /** SHA-256 of the server's agent-auth cert PEM — pin checked at enroll. */
+  serverCertHash: string;
+  /** SHA-256 of the server's web cert PEM — TLS pin for https deployments. */
+  webCertHash?: string;
+  group?: string | null;
+  labels?: string[];
+  installService?: boolean;
+  autoUpdate?: boolean;
+}
+
+// POST /api/agent/packages — streams a zip (installer + bootstrap + launcher)
+export interface CreateAgentPackageRequest {
+  platform: 'win32' | 'darwin' | 'linux';
+  arch: 'x64' | 'arm64';
+  enrollmentKeyId: string;
+  installService?: boolean;
+  autoUpdate?: boolean;
+}
+
+/** An installer binary present in a server agent-packages slot. */
+export interface InstallerInfo {
+  name: string;
+  size: number;
+  modifiedAt: string; // ISO
+}
+
+/** GET /api/agent/packages/available */
+export interface AvailableInstallersResponse {
+  /** Key: '<platform>-<arch>' — all 6 slots always present. */
+  available: Record<string, InstallerInfo | null>;
+  baseDir: string;
+}
+
+/** POST /api/agent/packages/installers */
+export interface UploadInstallerResponse {
+  installer: InstallerInfo;
+  /** Files that were removed from the slot (replace semantics). */
+  replaced: string[];
+}
+
+// PATCH /api/agent/profile — device-JWT authenticated
+export interface AgentUpdateProfileRequest {
+  deviceName?: string;
+}
+
+// Agent settings snapshot (agent-internal IPC surface)
+export interface AgentSettingsInfo {
+  serverUrl: string;
+  deviceName: string;
+  autoUpdate: boolean;
+  passwordSet: boolean;
+  serviceStatus: { installed: boolean; running: boolean };
+  agentVersion: string;
 }
 
 // -----------------------------------------------------------------------------

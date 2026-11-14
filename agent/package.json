@@ -1,6 +1,6 @@
 {
   "name": "@monitour/agent",
-  "version": "0.2.2",
+  "version": "0.2.6",
   "description": "Monitour remote management agent",
   "author": "Monitour",
   "private": true,
