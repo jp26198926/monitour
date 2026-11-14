@@ -14,3 +14,4 @@ agent/out/
 agent/dist/
 dashboard/dist/
 *.tsbuildinfo
+server/agent-packages/
