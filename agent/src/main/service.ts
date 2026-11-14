@@ -207,7 +207,16 @@ function installWindowsTask(): { success: boolean; message: string } {
 
 function uninstallWindowsTask(): { success: boolean; message: string } {
   try {
-    runElevatedBatch([`schtasks /delete /tn "${SERVICE_NAME}" /f`]);
+    // Remove both Task Scheduler entries: the auto-start service task and the
+    // lock-capture helper task (created on demand; removed nowhere else).
+    // Tolerant of missing tasks — uninstallService() verifies the real state.
+    runElevatedBatch([
+      `schtasks /end /tn "${SERVICE_NAME}" >nul 2>&1`,
+      `schtasks /delete /tn "${SERVICE_NAME}" /f >nul 2>&1`,
+      `schtasks /end /tn "${LOCK_TASK_NAME}" >nul 2>&1`,
+      `schtasks /delete /tn "${LOCK_TASK_NAME}" /f >nul 2>&1`,
+      `exit /b 0`,
+    ]);
     return { success: true, message: 'Auto-start task removed' };
   } catch (err) {
     return { success: false, message: `Failed to remove task: ${err instanceof Error ? err.message : err}` };
@@ -367,16 +376,5 @@ export function stopLockCapture(): { success: boolean; message: string } {
   } catch {
     // Task may not be running — that's fine
     return { success: true, message: 'Lock capture not running' };
-  }
-}
-
-export function removeLockCaptureTask(): { success: boolean; message: string } {
-  if (process.platform !== 'win32') return { success: false, message: 'Windows only' };
-  try {
-    stopLockCapture();
-    execSync(`powershell -Command "Start-Process cmd -ArgumentList '/c schtasks /delete /tn \\"${LOCK_TASK_NAME}\\" /f' -Verb RunAs -Wait"`, { encoding: 'utf-8', stdio: 'pipe' });
-    return { success: true, message: 'Lock capture task removed' };
-  } catch (err) {
-    return { success: false, message: `Failed to remove lock capture task: ${err}` };
   }
 }

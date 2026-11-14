@@ -3,7 +3,7 @@ import { mkdirSync, existsSync, createWriteStream, rmSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { join, basename } from 'node:path';
 import { homedir, platform, arch } from 'node:os';
-import { exec } from 'node:child_process';
+import { exec, spawn } from 'node:child_process';
 import { getAgentVersion } from './enrollment.js';
 import type { UpdateManifest } from '@monitour/shared';
 
@@ -92,6 +92,34 @@ export async function downloadUpdate(serverUrl: string, manifest: UpdateManifest
 }
 
 /**
+ * Relaunch the agent after an update, then exit.
+ *
+ * Under systemd/launchd the service supervisor already respawns us, so
+ * self-relaunching here would double-spawn and storm the single-instance
+ * lock — exit and let the supervisor act. Windows schtasks runs at boot
+ * only and never restarts on exit, so the service there must relaunch.
+ */
+async function relaunchAndExit(): Promise<void> {
+  if (process.argv.includes('--service') && platform() !== 'win32') {
+    console.log('Service supervisor will restart the agent');
+    process.exit(0);
+  }
+  if (process.versions.electron) {
+    // Main process: relaunch() respawns after exit with the same args
+    // (process.argv.slice(1)), so --service --hidden survives.
+    const { app } = await import('electron');
+    app.relaunch();
+    process.exit(0);
+  }
+  // Plain Node/CLI: detached re-exec; execArgv carries dev loader flags (tsx).
+  spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
+    detached: true,
+    stdio: 'ignore',
+  }).unref();
+  process.exit(0);
+}
+
+/**
  * Apply the downloaded update and restart.
  */
 export function applyUpdate(filepath: string): void {
@@ -106,10 +134,7 @@ export function applyUpdate(filepath: string): void {
           console.error('Update failed:', err);
         } else {
           console.log('Update installed. Restarting...');
-          setTimeout(() => {
-            // Restart the Electron app or Node process
-            process.exit(0);
-          }, 2000);
+          setTimeout(() => void relaunchAndExit(), 2000);
         }
       });
       break;
@@ -121,7 +146,7 @@ export function applyUpdate(filepath: string): void {
           console.error('Update failed:', err);
         } else {
           console.log('Update applied. Restarting...');
-          setTimeout(() => process.exit(0), 2000);
+          setTimeout(() => void relaunchAndExit(), 2000);
         }
       });
       break;
@@ -133,7 +158,7 @@ export function applyUpdate(filepath: string): void {
           console.error('Update failed:', err);
         } else {
           console.log('Update applied. Restarting...');
-          setTimeout(() => process.exit(0), 2000);
+          setTimeout(() => void relaunchAndExit(), 2000);
         }
       });
       break;

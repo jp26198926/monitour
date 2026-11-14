@@ -377,6 +377,9 @@ function startConnection(credentials: DeviceCredentials): void {
     // Clear identity but keep config.json — the settings password must survive,
     // otherwise a server-side delete would unlock the UI.
     wipeDeviceIdentity();
+    // Surface the window (creating it if needed) so the re-enroll prompt is
+    // visible — when started to tray there may be no window yet.
+    if (!HEADLESS) showMainWindow();
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('agent-status', { connected: false, lastSeen: Date.now() });
       mainWindow.webContents.send('device-deleted', {
@@ -423,10 +426,19 @@ if (!gotLock) {
   app.on('second-instance', () => showMainWindow());
 
   app.whenReady().then(async () => {
-    if (!HEADLESS) createWindow();
+    const state = loadAgentState();
+    const cfg = loadAgentConfig();
+
+    if (!HEADLESS) {
+      applyTraySetting();
+      // Start minimized to the tray only when already enrolled and the tray can
+      // host the app (tray !== null → icon loaded); otherwise show the window.
+      const canStartToTray =
+        state.enrolled && !!state.credentials && cfg?.showInTray !== false && tray !== null;
+      if (!canStartToTray) createWindow();
+    }
 
     // Auto-connect if already enrolled, else try zero-input bootstrap enrollment
-    const state = loadAgentState();
     if (state.enrolled && state.credentials) {
       startConnection(state.credentials);
     } else {
@@ -442,8 +454,6 @@ if (!gotLock) {
         console.error('Auto-enrollment failed:', err instanceof Error ? err.message : err);
       }
     }
-
-    applyTraySetting();
 
     if (!HEADLESS) {
       app.on('activate', () => showMainWindow());
