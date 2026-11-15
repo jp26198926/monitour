@@ -269,8 +269,11 @@ export function agentPackageRoutes(cfg: Config, certs: ServerCerts): Router {
       return;
     }
 
-    // Externally reachable server URL: PUBLIC_URL wins, else the request host
-    const publicUrl = (cfg.PUBLIC_URL || `http://${req.headers.host ?? `localhost:${cfg.PORT}`}`).replace(/\/+$/, '');
+    // Externally reachable server URL: PUBLIC_URL wins, else the request's
+    // forwarded host (the vite dev proxy rewrites Host to localhost:PORT).
+    const fwdProto = String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim();
+    const fwdHost = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? `localhost:${cfg.PORT}`).split(',')[0].trim();
+    const publicUrl = (cfg.PUBLIC_URL || `${fwdProto}://${fwdHost}`).replace(/\/+$/, '');
 
     const bootstrap: AgentBootstrap = {
       v: 1,

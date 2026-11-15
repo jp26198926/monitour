@@ -5,7 +5,7 @@ import {
   getAgentVersion,
   type DeviceCredentials,
 } from './enrollment.js';
-import { startCapture, captureFrame, getScreenInfo, getRawScreenDimensions, type ScreenFrame } from './screenCapture.js';
+import { startCapture, captureFrame, getScreenInfo, getRawScreenDimensions, nudge, type ScreenFrame } from './screenCapture.js';
 import { startCursorCapture } from './cursorCapture.js';
 import { handleInputEvent, setScreenDimensions, setSessionState as setInjectorSessionState } from './inputInjector.js';
 import { refreshSessionState, getSessionState, onSessionStateChange, type SessionState } from './lockState.js';
@@ -103,6 +103,8 @@ export class AgentConnection {
     // ---- Handle desktop input events from dashboard ----
     this.socket.on('server:desktop-input', (input: Parameters<typeof handleInputEvent>[0]) => {
       handleInputEvent(input);
+      // Feedback frame right after keystrokes/clicks (mousemove would saturate captures).
+      if (input.type !== 'mousemove') nudge();
     });
 
     // ---- Device deleted from server — must re-enroll ----

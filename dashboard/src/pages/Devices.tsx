@@ -69,7 +69,7 @@ export function DevicesPage() {
       }
 
       if (token && !cancelled) {
-        s = io('/dashboard', { auth: { token }, transports: ['websocket'] });
+        s = io('/dashboard', { auth: { token }, transports: ['websocket', 'polling'], tryAllTransports: true });
         s.on('dash:devices-update', (payload: { devices: DeviceInfo[] }) => {
           if (!cancelled) setDevices(payload.devices);
         });

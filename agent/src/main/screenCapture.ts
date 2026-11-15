@@ -17,6 +17,8 @@ export interface CaptureOptions {
 
 let captureInterval: ReturnType<typeof setInterval> | null = null;
 let frameSeq = 0;
+let active: { options: CaptureOptions; onFrame: (frame: ScreenFrame) => void; busy: boolean } | null = null;
+let lastNudge = 0;
 
 /**
  * Capture a single screenshot as JPEG via the active backend.
@@ -48,18 +50,18 @@ export function startCapture(options: CaptureOptions, onFrame: (frame: ScreenFra
   if (captureInterval) clearInterval(captureInterval);
 
   const intervalMs = Math.max(33, Math.round(1000 / options.fps));
-  let busy = false;
+  active = { options, onFrame, busy: false };
 
   captureInterval = setInterval(async () => {
-    if (busy) return; // skip frame if capture is slow
-    busy = true;
+    if (!active || active.busy) return; // skip frame if capture is slow
+    active.busy = true;
     try {
-      const frame = await captureFrame(options);
-      onFrame(frame);
+      const frame = await captureFrame(active.options);
+      active.onFrame(frame);
     } catch (err) {
       console.error('Screen capture error:', err);
     } finally {
-      busy = false;
+      if (active) active.busy = false;
     }
   }, intervalMs);
 
@@ -68,7 +70,25 @@ export function startCapture(options: CaptureOptions, onFrame: (frame: ScreenFra
       clearInterval(captureInterval);
       captureInterval = null;
     }
+    active = null;
   };
+}
+
+/** Capture a frame right away (e.g. after injecting input) so feedback doesn't
+ *  wait for the next interval tick. Throttled; no-op while a capture is running. */
+export function nudge(): void {
+  if (!active || active.busy) return;
+  const now = Date.now();
+  if (now - lastNudge < 40) return;
+  lastNudge = now;
+  const { options, onFrame } = active;
+  active.busy = true;
+  captureFrame(options)
+    .then(onFrame)
+    .catch((err) => console.error('Nudge capture error:', err))
+    .finally(() => {
+      if (active) active.busy = false;
+    });
 }
 
 /**

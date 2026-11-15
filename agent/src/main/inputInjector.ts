@@ -1,6 +1,12 @@
-import { mouse, keyboard, Button, Key, Point } from '@nut-tree-fork/nut-js';
+import { mouse, keyboard, Button, Key, Point, providerRegistry } from '@nut-tree-fork/nut-js';
 import type { InputEvent } from '@monitour/shared';
 import { sendInputEvent as sendWinInput, attachToInputDesktop, detachFromDesktop } from './winInput.js';
+
+// nut-js sleeps autoDelayMs (300ms keyboard / 100ms mouse) before EVERY call — zero it
+// for realtime injection, including the native keyboard delay set at construction.
+keyboard.config.autoDelayMs = 0;
+mouse.config.autoDelayMs = 0;
+if (providerRegistry.hasKeyboard()) providerRegistry.getKeyboard().setKeyboardDelay(0);
 
 let sessionLocked = false;
 
@@ -27,10 +33,12 @@ async function drainQueue(): Promise<void> {
   if (processing) return;
   processing = true;
   for (;;) {
-    // Prioritize the latest mousemove over queued events
-    const moveFn = pendingMouseMove;
-    pendingMouseMove = null;
-    const fn = moveFn ?? inputQueue.shift();
+    // Queued key/button events first; the coalesced mousemove goes last.
+    let fn: (() => Promise<void>) | null | undefined = inputQueue.shift();
+    if (!fn) {
+      fn = pendingMouseMove;
+      pendingMouseMove = null;
+    }
     if (!fn) break;
     try {
       await fn();
@@ -225,25 +233,15 @@ export function handleInputEvent(event: InputEvent): void {
     }
 
     case 'keydown': {
+      // Modifiers arrive as their own keydown/keyup events and stay held between
+      // them, so chords (Ctrl+C, Shift+A) work — no per-event flag replay.
       enqueue(async () => {
-        // Handle modifiers first
-        if (event.ctrl) await keyboard.pressKey(Key.LeftControl);
-        if (event.alt) await keyboard.pressKey(Key.LeftAlt);
-        if (event.shift) await keyboard.pressKey(Key.LeftShift);
-        if (event.meta) await keyboard.pressKey(Key.LeftSuper);
-
         const nutKey = resolveKey(event.code, event.key);
         if (nutKey !== null) {
           await keyboard.pressKey(nutKey);
         } else if (event.key.length === 1) {
           await keyboard.type(event.key);
         }
-
-        // Release modifiers (after key press)
-        if (event.ctrl) await keyboard.releaseKey(Key.LeftControl);
-        if (event.alt) await keyboard.releaseKey(Key.LeftAlt);
-        if (event.shift) await keyboard.releaseKey(Key.LeftShift);
-        if (event.meta) await keyboard.releaseKey(Key.LeftSuper);
       });
       break;
     }

@@ -12,7 +12,7 @@ const envSchema = z.object({
   /** Path to the server's data folder (certs, keys). */
   DATA_DIR: z.string().default('./data'),
   /** Allowed origins for the dashboard (CORS). Comma-separated. */
-  CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  CORS_ORIGIN: z.string().default('http://localhost:3000'),
   /** Externally reachable server URL used in generated agent packages. Falls back to the request Host header. */
   PUBLIC_URL: z.string().default(''),
   /** Log level */

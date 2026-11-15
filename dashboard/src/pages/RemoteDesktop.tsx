@@ -20,7 +20,6 @@ export function RemoteDesktopPage() {
   const { token } = useAuthStore();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
   const cursorRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const remoteCursorRef = useRef<HTMLCanvasElement>(null);
@@ -32,7 +31,6 @@ export function RemoteDesktopPage() {
   const lastFpsTimeRef = useRef(Date.now());
   const pendingFrameRef = useRef<ArrayBuffer | Uint8Array | null>(null);
   const decodingRef = useRef(false);
-  const objectUrlRef = useRef<string | null>(null);
 
   const [rtc, setRtc] = useState<DesktopState>({ status: 'idle', fps: 0, resolution: '', lastFrameAt: null, deviceOnline: false });
   const [controlEnabled, setControlEnabled] = useState(false);
@@ -50,29 +48,26 @@ export function RemoteDesktopPage() {
     pendingFrameRef.current = null;
     decodingRef.current = true;
 
-    const img = imgRef.current;
-    if (!img) {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) {
       decodingRef.current = false;
       return;
     }
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-    const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'image/jpeg' }));
-    objectUrlRef.current = url;
-
-    img.onload = () => {
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d');
-      if (canvas && ctx) {
-        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
-          canvas.width = img.naturalWidth;
-          canvas.height = img.naturalHeight;
+    createImageBitmap(new Blob([data as BlobPart], { type: 'image/jpeg' }))
+      .then((bmp) => {
+        if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
+          canvas.width = bmp.width;
+          canvas.height = bmp.height;
         }
-        ctx.drawImage(img, 0, 0);
-      }
-      decodingRef.current = false;
-      pump();
-    };
-    img.src = url;
+        ctx.drawImage(bmp, 0, 0);
+        bmp.close();
+      })
+      .catch((err) => console.error('Frame decode error:', err))
+      .finally(() => {
+        decodingRef.current = false;
+        pump();
+      });
   }, []);
 
   const renderFrame = useCallback((data: ArrayBuffer | Uint8Array) => {
@@ -107,7 +102,7 @@ export function RemoteDesktopPage() {
     if (!deviceId || !token) return;
 
     let cancelled = false;
-    const socket = io('/dashboard', { auth: { token }, transports: ['websocket'] });
+    const socket = io('/dashboard', { auth: { token }, transports: ['websocket', 'polling'], tryAllTransports: true });
     socketRef.current = socket;
 
     setRtc((s) => ({ ...s, status: 'connecting' }));
@@ -466,7 +461,6 @@ export function RemoteDesktopPage() {
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}
       >
-        <img ref={imgRef} style={{ display: 'none' }} alt="" />
         <canvas ref={canvasRef} />
 
         {/* Fallback marker (operator's pointer) — only before real cursor data arrives */}

@@ -166,12 +166,16 @@ export function enrollmentRoutes(cfg: Config, certs: ServerCerts): Router {
     );
 
     log.info(`Device enrolled: ${deviceName} (${device._id})`);
+    // PUBLIC_URL wins, else the request's forwarded host (the vite dev proxy
+    // rewrites Host to localhost:PORT) — this is the URL the agent connects to.
+    const fwdProto = String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim();
+    const fwdHost = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? `localhost:${cfg.PORT}`).split(',')[0].trim();
     res.status(201).json({
       deviceId: device._id.toString(),
       deviceName,
       deviceToken,
       serverCertHash: certs.agentCertHash,
-      serverUrl: `http://${req.headers.host ?? 'localhost:' + cfg.PORT}`,
+      serverUrl: (cfg.PUBLIC_URL || `${fwdProto}://${fwdHost}`).replace(/\/+$/, ''),
     });
   });
 
